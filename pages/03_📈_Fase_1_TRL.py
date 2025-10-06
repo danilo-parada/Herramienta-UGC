@@ -27,11 +27,70 @@ if fase0_page:
         st.switch_page(str(fase0_page))
     st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown("### Selecciona un proyecto del portafolio maestro")
-df_port = utils.normalize_df(db.fetch_df())
-if df_port.empty:
-    st.warning("No hay proyectos en el portafolio. Registra iniciativas en Fase 0.")
+payload = st.session_state.get('fase1_payload')
+fase1_ready = st.session_state.get('fase1_ready', False)
+
+if not payload or not fase1_ready:
+    st.warning('Calcula el ranking de candidatos en Fase 0 y usa el boton "Ir a Fase 1" para continuar.')
+    if fase0_page:
+        if st.button('Ir a Fase 0', key='btn_ir_fase0_desde_fase1'):
+            st.switch_page(str(fase0_page))
     st.stop()
+
+ranking_df = payload['ranking'].copy().reset_index(drop=True)
+if ranking_df.empty:
+    st.warning('El ranking recibido esta vacio. Recalcula la priorizacion en Fase 0.')
+    if fase0_page:
+        if st.button('Recalcular en Fase 0', key='btn_recalcular_fase0'):
+            st.switch_page(str(fase0_page))
+    st.stop()
+
+metrics_cards = payload.get('metrics_cards', [])
+umbrales = payload.get('umbrales', {})
+
+if metrics_cards:
+    metric_cols = st.columns(len(metrics_cards))
+    for col, (label, value) in zip(metric_cols, metrics_cards):
+        col.metric(label, value)
+
+st.markdown('#### Ranking de candidatos priorizados')
+ranking_display = ranking_df.copy()
+styled_ranking = ranking_display.style.format({'evaluacion_calculada': '{:.1f}'})
+styled_ranking = styled_ranking.apply(
+    lambda row: ['background-color: #cfeedd' if row.name < 3 else '' for _ in row], axis=1
+)
+st.dataframe(styled_ranking, use_container_width=True, hide_index=True)
+
+ranking_keys = ranking_df[['id_innovacion', 'ranking']].copy()
+ranking_keys['id_str'] = ranking_keys['id_innovacion'].astype(str)
+
+df_port = utils.normalize_df(db.fetch_df())
+df_port['id_str'] = df_port['id_innovacion'].astype(str)
+df_port = df_port[df_port['id_str'].isin(ranking_keys['id_str'])].copy()
+if df_port.empty:
+    st.warning('Los proyectos del ranking ya no estan disponibles en el portafolio maestro. Recalcula la priorizacion en Fase 0.')
+    if fase0_page:
+        if st.button('Volver a Fase 0', key='btn_volver_recalcular'):
+            st.switch_page(str(fase0_page))
+    st.stop()
+
+order_map = dict(zip(ranking_keys['id_str'], ranking_keys['ranking']))
+df_port['orden_ranking'] = df_port['id_str'].map(order_map)
+df_port = df_port.sort_values('orden_ranking').reset_index(drop=True)
+df_port = df_port.drop(columns=['id_str', 'orden_ranking'], errors='ignore')
+
+st.markdown("### Selecciona un proyecto del portafolio maestro")
+
+
+
+def parse_project_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        st.error('No se puede registrar la evaluacion porque el identificador del proyecto no es numerico. Revisa la Fase 0.')
+        st.stop()
+
+
 
 
 def fmt_opt(identificador: int) -> str:
@@ -43,6 +102,7 @@ def fmt_opt(identificador: int) -> str:
 
 ids = df_port["id_innovacion"].tolist()
 seleccion = st.selectbox("Proyecto", ids, format_func=fmt_opt)
+project_id = parse_project_id(seleccion)
 
 st.markdown("### Dimensiones y evidencias")
 df_resp = trl.esquema_respuestas()
@@ -69,7 +129,7 @@ with col_guardar:
             st.error("Define niveles validos (1-9) en al menos una dimension antes de guardar.")
         else:
             try:
-                save_trl_result(int(seleccion), df_resp, float(puntaje))
+                save_trl_result(project_id, df_resp, float(puntaje))
                 st.success("Evaluacion guardada correctamente.")
             except Exception as error:
                 st.error(f"Error al guardar: {error}")
@@ -105,7 +165,7 @@ with radar_col_right:
 st.divider()
 st.subheader("Historial del proyecto")
 
-historial = get_trl_history(int(seleccion))
+historial = get_trl_history(project_id)
 if historial.empty:
     st.warning("Aun no existe historial TRL para este proyecto.")
 else:
