@@ -1803,60 +1803,19 @@ def _prepare_lookup(df: pd.DataFrame):
 
 
 def _thresholds(df_eval: pd.DataFrame):
-
-
-
-
-
-
-
     lookup = _prepare_lookup(df_eval)
-
-
-
-
-
-
-
+    baja = lookup.get('baja', 0.0)
+    media = lookup.get('media', 50.0)
+    alta = lookup.get('alta', 100.0)
+    if media < baja:
+        media = baja
+    if alta < media:
+        alta = media
     return {
-
-
-
-
-
-
-
-        'alta': lookup.get('prioridad_alta_umbral', 375.0),
-
-
-
-
-
-
-
-        'media': lookup.get('prioridad_media_umbral', 250.0),
-
-
-
-
-
-
-
+        'baja': baja,
+        'media': media,
+        'alta': alta,
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -2235,54 +2194,14 @@ def generar_recomendacion(row, puntaje, tablas):
 
 
     umbrales = _thresholds(tablas['evaluacion'])
-
-
-
-
-
-
-
-    if puntaje >= umbrales['alta']:
-
-
-
-
-
-
-
-        partes.append('Prioridad alta')
-
-
-
-
-
-
-
-    elif puntaje >= umbrales['media']:
-
-
-
-
-
-
-
-        partes.append('Prioridad media')
-
-
-
-
-
-
-
-    else:
-
-
-
-
-
-
-
+    media_lim = umbrales['media']
+    alta_lim = umbrales['alta']
+    if puntaje <= media_lim:
         partes.append('Prioridad baja')
+    elif puntaje <= alta_lim:
+        partes.append('Prioridad media')
+    else:
+        partes.append('Prioridad alta')
 
 
 
@@ -3101,14 +3020,9 @@ if uploaded_file is not None:
                     st.warning(f'Valores fuera de catalogo detectados en la carga: {details}. Se limpiaron para revision.')
                 db.replace_all(df_norm)
                 portafolio_df = df_norm
-
-
-
-
-
-
-
                 st.session_state.pop('fase0_result', None)
+                st.session_state.pop('fase1_payload', None)
+                st.session_state.pop('fase1_ready', None)
 
 
 
@@ -3231,6 +3145,8 @@ if st.button('Guardar portafolio', key='btn_guardar_portafolio'):
 
 
         st.session_state.pop('fase0_result', None)
+        st.session_state.pop('fase1_payload', None)
+        st.session_state.pop('fase1_ready', None)
 
 
 
@@ -3510,7 +3426,7 @@ if resultado is not None and not resultado.empty:
 
 
 
-    candidatos_media = int((resultado['evaluacion_calculada'] >= umbrales['media']).sum())
+    candidatos_media = int((resultado['evaluacion_calculada'] > umbrales['media']).sum())
 
 
 
@@ -3527,53 +3443,17 @@ if resultado is not None and not resultado.empty:
 
 
     metric_cards = [
-
-
-
-
-
-
-
         ('Total proyectos', total),
-
-
-
-
-
-
-
         ('Candidatos >= prioridad media', candidatos_media),
-
-
-
-
-
-
-
         ('Puntaje maximo', f"{resultado['evaluacion_calculada'].max():.1f}"),
-
-
-
-
-
-
-
         ('Puntaje promedio', f"{resultado['evaluacion_calculada'].mean():.1f}"),
-
-
-
-
-
-
-
     ]
-
-
-
-
-
-
-
+    st.session_state['fase1_payload'] = {
+        'ranking': resultado.copy(),
+        'metrics_cards': metric_cards.copy(),
+        'umbrales': umbrales,
+    }
+    st.session_state['fase1_ready'] = False
     metric_html = ['<div class="metric-grid">']
 
 
@@ -3655,13 +3535,7 @@ if resultado is not None and not resultado.empty:
 
 
         if st.button('Ir a Fase 1', key='btn_ir_fase1', type='primary'):
-
-
-
-
-
-
-
+            st.session_state['fase1_ready'] = True
             st.switch_page(str(fase1_page))
 
 
@@ -3727,19 +3601,13 @@ if resultado is not None and not resultado.empty:
             resultado.to_excel(writer, index=False, sheet_name='Evaluacion')
 
             resumen_df = pd.DataFrame([
-
                 {'Indicador': 'Total proyectos', 'Valor': total},
-
                 {'Indicador': 'Candidatos >= prioridad media', 'Valor': candidatos_media},
-
                 {'Indicador': 'Puntaje maximo', 'Valor': f"{resultado['evaluacion_calculada'].max():.1f}"},
-
                 {'Indicador': 'Puntaje promedio', 'Valor': f"{resultado['evaluacion_calculada'].mean():.1f}"},
-
-                {'Indicador': 'Umbral prioridad alta', 'Valor': umbrales['alta']},
-
+                {'Indicador': 'Umbral prioridad baja', 'Valor': umbrales['baja']},
                 {'Indicador': 'Umbral prioridad media', 'Valor': umbrales['media']},
-
+                {'Indicador': 'Umbral prioridad alta', 'Valor': umbrales['alta']},
             ])
 
             resumen_df.to_excel(writer, index=False, sheet_name='Resumen')
