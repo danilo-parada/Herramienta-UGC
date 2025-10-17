@@ -605,7 +605,7 @@ def _init_irl_state() -> None:
             st.session_state[_STATE_KEY][dimension] = {}
             for level in LEVEL_DEFINITIONS.get(dimension, []):
                 st.session_state[_STATE_KEY][dimension][level["nivel"]] = {
-                    "respuesta": None,
+                    "respuesta": "FALSO",
                     "respuestas_preguntas": {},
                     "evidencia": "",
                     "evidencias_preguntas": {},
@@ -625,7 +625,7 @@ def _init_irl_state() -> None:
             for idx, _ in enumerate(preguntas, start=1):
                 clave = str(idx)
                 valor = existentes.get(clave)
-                normalizado[clave] = valor if valor in {"VERDADERO", "FALSO"} else None
+                normalizado[clave] = valor if valor in {"VERDADERO", "FALSO"} else "FALSO"
             state["respuestas_preguntas"] = normalizado
             evidencias_existentes = state.get("evidencias_preguntas")
             if not isinstance(evidencias_existentes, dict):
@@ -817,44 +817,6 @@ def _aggregate_question_status(respuestas: dict[str, str | None]) -> str | None:
     return "FALSO"
 
 
-def _has_pending_changes(
-    level_state: dict,
-    respuestas_actuales: dict[str, str | None] | None,
-    respuesta_manual_actual: str | None,
-    evidencia_actual: str,
-    evidencias_preguntas_actuales: dict[str, str] | None,
-) -> bool:
-    evidencia_actual = (evidencia_actual or "").strip()
-
-    if respuestas_actuales is not None:
-        guardadas = level_state.get("respuestas_preguntas") or {}
-        if guardadas != respuestas_actuales:
-            return True
-    elif level_state.get("respuestas_preguntas"):
-        return True
-
-    if respuesta_manual_actual is not None:
-        if level_state.get("respuesta") != respuesta_manual_actual:
-            return True
-
-    saved_evidencias = level_state.get("evidencias_preguntas")
-    if evidencias_preguntas_actuales is not None:
-        normalizadas_guardadas = {
-            str(k): (v or "").strip() for k, v in (saved_evidencias or {}).items()
-        }
-        normalizadas_actuales = {
-            str(k): (v or "").strip() for k, v in evidencias_preguntas_actuales.items()
-        }
-        if normalizadas_guardadas != normalizadas_actuales:
-            return True
-
-    evidencia_guardada = (level_state.get("evidencia") or "").strip()
-    if evidencia_guardada != evidencia_actual:
-        return True
-
-    return False
-
-
 def _handle_level_submission(
     dimension: str,
     level_id: int,
@@ -943,6 +905,7 @@ def _handle_level_submission(
     _set_level_state(dimension, level_id, respuesta=respuesta)
 
     if respuesta == "VERDADERO":
+        palabra_count = len(re.findall(r"[\wÀ-ÿ]+", evidencia))
         if len(evidencia) < STEP_CONFIG["min_evidence_chars"] or palabra_count <= 5:
             mensaje = "Para cerrar el nivel, detalla el medio de verificación de la respuesta VERDADERA."
             _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
@@ -1012,14 +975,14 @@ def _render_dimension_tab(dimension: str) -> None:
                 if pregunta_key not in st.session_state:
                     default_option = existentes.get(idx_str)
                     st.session_state[pregunta_key] = (
-                        default_option if default_option in {"VERDADERO", "FALSO"} else "Sin respuesta"
+                        default_option if default_option in {"VERDADERO", "FALSO"} else "FALSO"
                     )
                 if evidencia_pregunta_key not in st.session_state:
                     st.session_state[evidencia_pregunta_key] = evidencias_preguntas_state.get(idx_str, "")
 
             if not preguntas:
                 current_answer = state.get("respuesta")
-                current_option = current_answer if current_answer in {"VERDADERO", "FALSO"} else "Sin respuesta"
+                current_option = current_answer if current_answer in {"VERDADERO", "FALSO"} else "FALSO"
                 if answer_key not in st.session_state:
                     st.session_state[answer_key] = current_option
 
@@ -1028,7 +991,6 @@ def _render_dimension_tab(dimension: str) -> None:
             respuesta_manual: str | None = None
             normalizado_actual: dict[str, str | None] | None = None
             ready_to_save = False
-            pending_changes = False
 
             with st.form(f"form_{dimension}_{level_id}", clear_on_submit=False):
                 st.markdown(
@@ -1084,7 +1046,7 @@ def _render_dimension_tab(dimension: str) -> None:
                             value=st.session_state[evidencia_pregunta_key],
                             key=evidencia_pregunta_key,
                             placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
-                            height=140,
+                            height=100,
                             max_chars=STEP_CONFIG["max_char_limit"],
                         )
                         contador = len(_clean_text(evidencia_texto))
@@ -1094,32 +1056,6 @@ def _render_dimension_tab(dimension: str) -> None:
                             "</div>"
                         )
                         st.markdown(contador_html, unsafe_allow_html=True)
-
-                        if evidencia_texto:
-                            palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
-                            if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
-                                st.markdown(
-                                    """
-                                    <div class='question-block__hint'>
-                                        Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia.
-                                    </div>
-                                    """,
-                                    unsafe_allow_html=True,
-                                )
-
-                        respuesta_actual = st.session_state.get(pregunta_key)
-                        evidencia_actual = st.session_state.get(evidencia_pregunta_key, "")
-                        requiere_evidencia = respuesta_actual == "VERDADERO"
-                        evidencia_valida = _is_evidence_valid(evidencia_actual)
-                        if requiere_evidencia and not evidencia_valida:
-                            st.markdown(
-                                """
-                                <div class='question-block__warning'>
-                                    Para cerrar este nivel, detalla el medio de verificación de esta respuesta marcada como VERDADERO.
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
 
                         st.markdown("</div>", unsafe_allow_html=True)
                 else:
@@ -1146,7 +1082,7 @@ def _render_dimension_tab(dimension: str) -> None:
                         value=st.session_state[evidencia_key],
                         key=evidencia_key,
                         placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
-                        height=160,
+                        height=110,
                         max_chars=STEP_CONFIG["max_char_limit"],
                     )
 
@@ -1157,18 +1093,6 @@ def _render_dimension_tab(dimension: str) -> None:
                         "</div>"
                     )
                     st.markdown(contador_html, unsafe_allow_html=True)
-
-                    if evidencia_texto:
-                        palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
-                        if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
-                            st.markdown(
-                                """
-                                <div class='stepper-form__hint'>
-                                    Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia.
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
 
                 respuestas_dict = {
                     idx_str: (
@@ -1209,27 +1133,8 @@ def _render_dimension_tab(dimension: str) -> None:
                     if respuesta_manual == "VERDADERO":
                         if not _is_evidence_valid(evidencia_texto):
                             ready_to_save = False
-                            st.markdown(
-                                """
-                                <div class='stepper-form__warning'>
-                                    Para cerrar este nivel, detalla el medio de verificación de la respuesta VERDADERA.
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
 
                 st.session_state[_READY_KEY][dimension][level_id] = ready_to_save
-
-                pending_changes = _has_pending_changes(
-                    state,
-                    normalizado_actual if preguntas else None,
-                    respuesta_manual,
-                    evidencia_texto,
-                    evidencias_dict_envio if preguntas else None,
-                )
-
-                if ready_to_save and pending_changes:
-                    st.info("Presiona **Guardar** para registrar tu respuesta.")
 
                 error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
                 if error_msg:
@@ -1239,13 +1144,7 @@ def _render_dimension_tab(dimension: str) -> None:
                 guardar = col_guardar.form_submit_button(
                     "Guardar",
                     type="primary",
-                    help=(
-                        "Se habilita el guardado aunque falten respuestas para permitir el envío"
-                        " de los cambios. El sistema validará que todas las preguntas tengan"
-                        " respuesta y evidencias cuando corresponda."
-                        if not st.session_state[_READY_KEY][dimension].get(level_id, False)
-                        else None
-                    ),
+                    disabled=not ready_to_save,
                 )
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
