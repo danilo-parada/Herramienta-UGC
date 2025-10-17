@@ -2083,7 +2083,6 @@ st.markdown(
     """
     <div class="page-intro">
         <div>
-            <span class="badge-soft">Fase 1 · IRL / TRL</span>
             <h1>Evaluacion estrategica de madurez tecnologica</h1>
             <p>
                 Priorizamos proyectos del portafolio maestro para registrar evidencias por dimension, estimar el TRL e impulsar el
