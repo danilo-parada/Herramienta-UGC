@@ -569,6 +569,27 @@ _STATUS_CLASS_MAP = {
 }
 
 
+def _clean_text(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def _missing_required_evidences(
+    level: dict,
+    respuestas: dict[str, str | None] | None,
+    evidencias: dict[str, str] | None,
+) -> list[int]:
+    if respuestas is None:
+        return []
+    preguntas = level.get("preguntas") or []
+    evidencias = evidencias or {}
+    faltantes: list[int] = []
+    for idx, _ in enumerate(preguntas, start=1):
+        clave = str(idx)
+        if respuestas.get(clave) == "VERDADERO" and not _clean_text(evidencias.get(clave)):
+            faltantes.append(idx)
+    return faltantes
+
+
 def _init_irl_state() -> None:
     if _STATE_KEY not in st.session_state:
         st.session_state[_STATE_KEY] = {}
@@ -847,41 +868,65 @@ def _handle_level_submission(
         evidencias_preguntas=evidencias_normalizadas,
     )
 
+    banner_msg: str | None = None
+
     if preguntas:
+        faltantes = _missing_required_evidences(
+            level_data, normalizado, evidencias_normalizadas
+        )
         if any(valor is None for valor in normalizado.values()):
             mensaje = "Responde VERDADERO o FALSO para cada pregunta."
-            _set_level_state(dimension, level_id, respuesta=None, estado_auto="Pendiente", en_calculo=False)
+            _set_level_state(
+                dimension,
+                level_id,
+                respuesta=None,
+                estado_auto="Pendiente",
+                en_calculo=False,
+            )
             return False, mensaje, mensaje
         respuesta = _aggregate_question_status(normalizado)
         if respuesta is None:
             mensaje = "Responde VERDADERO o FALSO para cada pregunta."
-            _set_level_state(dimension, level_id, respuesta=None, estado_auto="Pendiente", en_calculo=False)
+            _set_level_state(
+                dimension,
+                level_id,
+                respuesta=None,
+                estado_auto="Pendiente",
+                en_calculo=False,
+            )
             return False, mensaje, mensaje
+        if faltantes:
+            faltantes_str = ", ".join(str(idx) for idx in faltantes)
+            banner_msg = (
+                "Puedes añadir medios de verificación para las preguntas VERDADERO "
+                f"({faltantes_str}) cuando quieras reforzar tu registro."
+            )
     else:
         if respuesta_manual not in {"VERDADERO", "FALSO"}:
             mensaje = "Selecciona VERDADERO o FALSO para continuar."
-            _set_level_state(dimension, level_id, respuesta=None, estado_auto="Pendiente", en_calculo=False)
+            _set_level_state(
+                dimension,
+                level_id,
+                respuesta=None,
+                estado_auto="Pendiente",
+                en_calculo=False,
+            )
             return False, mensaje, mensaje
         respuesta = respuesta_manual
+        if respuesta == "VERDADERO" and not evidencia:
+            banner_msg = (
+                "Puedes adjuntar un medio de verificación en este nivel en cualquier momento desde el mismo panel."
+            )
 
-    palabra_count = len(re.findall(r"[\wÀ-ÿ]+", evidencia)) if evidencia else 0
     _set_level_state(dimension, level_id, respuesta=respuesta)
 
-    if respuesta == "VERDADERO":
-        if len(evidencia) < STEP_CONFIG["min_evidence_chars"] or palabra_count <= 5:
-            if STEP_CONFIG["evidence_obligatoria_strict"]:
-                mensaje = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
-                _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
-                return False, mensaje, mensaje
-            _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
-            banner = "Agrega evidencia para activar este nivel en el cálculo."
-            return True, None, banner
-        _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
-        return True, None, None
-
-    # respuesta == "FALSO"
-    _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
-    return True, None, None
+    _set_level_state(
+        dimension,
+        level_id,
+        estado_auto="Respondido (en cálculo)",
+        en_calculo=True,
+    )
+    return True, None, banner_msg
 
 
 def _render_dimension_tab(dimension: str) -> None:
@@ -970,40 +1015,86 @@ def _render_dimension_tab(dimension: str) -> None:
                     for idx, pregunta in enumerate(preguntas, start=1):
                         pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
                         evidencia_pregunta_key = f"evid_{dimension}_{level_id}_{idx}"
-                        fila = st.container()
-                        with fila:
-                            texto_col, opciones_col = st.columns([5, 2])
-                            with texto_col:
-                                st.markdown(f"**{idx}.** {pregunta}")
-                            with opciones_col:
-                                st.radio(
-                                    "Selecciona una opción",
-                                    options=["Sin respuesta", "VERDADERO", "FALSO"],
-                                    key=pregunta_key,
-                                    horizontal=True,
-                                    label_visibility="collapsed",
-                                )
+                        respuesta_actual = st.session_state.get(pregunta_key, "Sin respuesta")
+                        evidencia_actual = st.session_state.get(evidencia_pregunta_key, "")
+                        requiere_evidencia = respuesta_actual == "VERDADERO"
+                        tiene_evidencia = bool(_clean_text(evidencia_actual))
+                        bloque_clases = ["question-block"]
+                        if respuesta_actual in {"VERDADERO", "FALSO"}:
+                            bloque_clases.append("question-block--complete")
+                        else:
+                            bloque_clases.append("question-block--pending")
+                        if requiere_evidencia and not tiene_evidencia:
+                            bloque_clases.append("question-block--missing-evidence")
+
+                        st.markdown(
+                            f"<div class='{' '.join(bloque_clases)}'>",
+                            unsafe_allow_html=True,
+                        )
+
+                        cabecera_col, opciones_col = st.columns([7, 3])
+                        with cabecera_col:
+                            pregunta_html = escape(pregunta).replace("\n", "<br>")
+                            st.markdown(
+                                (
+                                    "<div class='question-block__header'>"
+                                    f"<div class='question-block__badge'>{idx}</div>"
+                                    f"<div class='question-block__text'>{pregunta_html}</div>"
+                                    "</div>"
+                                ),
+                                unsafe_allow_html=True,
+                            )
+                        with opciones_col:
+                            st.radio(
+                                "Selecciona una opción",
+                                options=["Sin respuesta", "VERDADERO", "FALSO"],
+                                key=pregunta_key,
+                                horizontal=True,
+                                label_visibility="collapsed",
+                            )
+
                         evidencia_texto = st.text_area(
                             "Medio de verificación (texto)",
                             value=st.session_state[evidencia_pregunta_key],
                             key=evidencia_pregunta_key,
                             placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
-                            height=160,
+                            height=140,
                             max_chars=STEP_CONFIG["max_char_limit"],
                         )
-                        contador = len(evidencia_texto.strip())
+                        contador = len(_clean_text(evidencia_texto))
                         contador_html = (
-                            f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
+                            f"<div class='question-block__counter{' question-block__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
                             f"{contador}/{STEP_CONFIG['soft_char_limit']}"
                             "</div>"
                         )
                         st.markdown(contador_html, unsafe_allow_html=True)
+
                         if evidencia_texto:
                             palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
                             if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
-                                st.info(
-                                    "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
+                                st.markdown(
+                                    """
+                                    <div class='question-block__hint'>
+                                        Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia.
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
                                 )
+
+                        respuesta_actual = st.session_state.get(pregunta_key)
+                        evidencia_actual = st.session_state.get(evidencia_pregunta_key, "")
+                        requiere_evidencia = respuesta_actual == "VERDADERO"
+                        if requiere_evidencia and not _clean_text(evidencia_actual):
+                            st.markdown(
+                                """
+                                <div class='question-block__hint question-block__hint--gentle'>
+                                    Puedes añadir un medio de verificación para reforzar esta respuesta marcada como VERDADERO.
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
+                        st.markdown("</div>", unsafe_allow_html=True)
                 else:
                     st.radio(
                         "Responder",
@@ -1015,11 +1106,11 @@ def _render_dimension_tab(dimension: str) -> None:
                 evidencia_texto = ""
                 if preguntas:
                     evidencias_dict_envio = {
-                        idx_str: (st.session_state.get(e_key) or "")
+                        idx_str: _clean_text(st.session_state.get(e_key))
                         for idx_str, e_key in evidencia_question_keys
                     }
                     evidencia_texto = " \n".join(
-                        texto.strip() for texto in evidencias_dict_envio.values() if texto.strip()
+                        texto for texto in evidencias_dict_envio.values() if texto
                     )
                     st.session_state[evidencia_key] = evidencia_texto
                 else:
@@ -1032,7 +1123,7 @@ def _render_dimension_tab(dimension: str) -> None:
                         max_chars=STEP_CONFIG["max_char_limit"],
                     )
 
-                    contador = len(evidencia_texto.strip())
+                    contador = len(_clean_text(evidencia_texto))
                     contador_html = (
                         f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
                         f"{contador}/{STEP_CONFIG['soft_char_limit']}"
@@ -1043,8 +1134,13 @@ def _render_dimension_tab(dimension: str) -> None:
                     if evidencia_texto:
                         palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
                         if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
-                            st.info(
-                                "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
+                            st.markdown(
+                                """
+                                <div class='stepper-form__hint'>
+                                    Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia.
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
                             )
 
                 respuestas_dict = {
@@ -1061,11 +1157,36 @@ def _render_dimension_tab(dimension: str) -> None:
                     ready_to_save = all(
                         valor in {"VERDADERO", "FALSO"} for valor in normalizado_actual.values()
                     )
+                    faltantes_requisitos = _missing_required_evidences(
+                        level,
+                        normalizado_actual,
+                        evidencias_dict_envio,
+                    )
+                    if faltantes_requisitos:
+                        faltantes_str = ", ".join(str(idx) for idx in faltantes_requisitos)
+                        st.markdown(
+                            (
+                                "<div class='stepper-form__hint stepper-form__hint--soft'>"
+                                "Agrega un medio de verificación en las preguntas marcadas como VERDADERO ("
+                                f"{faltantes_str}) cuando dispongas del soporte."
+                                "</div>"
+                            ),
+                            unsafe_allow_html=True,
+                        )
                 else:
                     valor_manual = st.session_state.get(answer_key)
                     if valor_manual in {"VERDADERO", "FALSO"}:
                         respuesta_manual = valor_manual
                     ready_to_save = respuesta_manual is not None
+                    if respuesta_manual == "VERDADERO" and not _clean_text(evidencia_texto):
+                        st.markdown(
+                            """
+                            <div class='stepper-form__hint stepper-form__hint--soft'>
+                                Puedes detallar un medio de verificación para respaldar la respuesta VERDADERA cuando lo tengas disponible.
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
                 st.session_state[_READY_KEY][dimension][level_id] = ready_to_save
 
@@ -1087,8 +1208,12 @@ def _render_dimension_tab(dimension: str) -> None:
                 col_guardar, col_revision = st.columns([2, 1])
                 guardar = col_guardar.form_submit_button(
                     "Guardar",
-                    disabled=not st.session_state[_READY_KEY][dimension].get(level_id, False),
                     type="primary",
+                    help=(
+                        "Responde todas las preguntas del nivel para cerrar el registro."
+                        if not st.session_state[_READY_KEY][dimension].get(level_id, False)
+                        else None
+                    ),
                 )
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
@@ -1565,18 +1690,32 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .level-card--answered {
-    border-color: rgba(34, 141, 96, 0.9);
-    box-shadow: 0 26px 42px rgba(34, 141, 96, 0.26);
-    background: linear-gradient(135deg, rgba(27, 112, 76, 0.12), rgba(19, 76, 51, 0.18));
+    border-color: #0b7a4b;
+    box-shadow: 0 30px 52px rgba(11, 122, 75, 0.32);
+    background: linear-gradient(140deg, rgba(9, 94, 60, 0.26), rgba(2, 53, 32, 0.22));
+    position: relative;
+}
+
+.level-card--answered::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 20px;
+    background: radial-gradient(circle at top right, rgba(41, 180, 120, 0.24), transparent 55%);
+    pointer-events: none;
 }
 
 .level-card--complete {
     border-color: rgba(34, 141, 96, 0.7);
 }
 
-.level-card--complete > div[data-testid="stExpander"] > details > summary,
-.level-card--answered > div[data-testid="stExpander"] > details > summary {
+.level-card--complete > div[data-testid="stExpander"] > details > summary {
     color: #0f3d28;
+}
+
+.level-card--answered > div[data-testid="stExpander"] > details > summary {
+    color: #e9fff4;
+    text-shadow: 0 1px 1px rgba(4, 42, 27, 0.4);
 }
 
 .level-card--pending {
@@ -1606,6 +1745,95 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     line-height: 1.55;
 }
 
+.question-block {
+    border: 2px solid rgba(var(--shadow-color), 0.18);
+    border-radius: 18px;
+    padding: 1.1rem 1.2rem 1rem;
+    margin-bottom: 1rem;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 10px 24px rgba(var(--shadow-color), 0.16);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.question-block--complete {
+    border-color: rgba(17, 131, 84, 0.85);
+    background: linear-gradient(135deg, rgba(11, 113, 72, 0.12), rgba(7, 74, 48, 0.12));
+}
+
+.question-block--pending {
+    border-color: rgba(var(--shadow-color), 0.16);
+}
+
+.question-block--missing-evidence {
+    border-style: dashed;
+    border-color: rgba(255, 166, 43, 0.55);
+}
+
+.question-block__header {
+    display: flex;
+    gap: 0.85rem;
+    align-items: flex-start;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-700);
+}
+
+.question-block__badge {
+    min-width: 2.2rem;
+    height: 2.2rem;
+    border-radius: 999px;
+    background: linear-gradient(140deg, rgba(31, 132, 92, 0.95), rgba(17, 91, 63, 0.92));
+    color: #f2fff8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.95rem;
+}
+
+.question-block__text {
+    flex: 1;
+    line-height: 1.45;
+}
+
+.question-block__counter {
+    text-align: right;
+    margin-top: 0.35rem;
+    font-size: 0.8rem;
+    color: rgba(var(--shadow-color), 0.65);
+}
+
+.question-block__counter--alert {
+    color: rgba(184, 92, 64, 0.88);
+    font-weight: 600;
+}
+
+.question-block__hint {
+    margin-top: 0.4rem;
+    background: rgba(255, 193, 99, 0.16);
+    border-left: 4px solid rgba(255, 166, 43, 0.5);
+    padding: 0.55rem 0.75rem;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    color: rgba(132, 77, 7, 0.92);
+}
+
+.question-block__hint--gentle {
+    background: rgba(255, 193, 99, 0.12);
+    border-left-color: rgba(255, 166, 43, 0.4);
+    color: rgba(132, 77, 7, 0.82);
+}
+
+.question-block__warning {
+    margin-top: 0.6rem;
+    background: rgba(206, 104, 86, 0.14);
+    border-left: 5px solid rgba(206, 104, 86, 0.9);
+    padding: 0.7rem 0.85rem;
+    border-radius: 10px;
+    font-size: 0.86rem;
+    color: rgba(122, 36, 24, 0.95);
+}
+
 .stepper-form__counter {
     text-align: right;
     font-size: 0.75rem;
@@ -1616,6 +1844,32 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 .stepper-form__counter--alert {
     color: #a35a00;
     font-weight: 600;
+}
+
+.stepper-form__hint {
+    margin-top: 0.45rem;
+    background: rgba(255, 193, 99, 0.16);
+    border-left: 4px solid rgba(255, 166, 43, 0.5);
+    padding: 0.55rem 0.75rem;
+    border-radius: 10px;
+    font-size: 0.86rem;
+    color: rgba(132, 77, 7, 0.92);
+}
+
+.stepper-form__hint--soft {
+    background: rgba(255, 193, 99, 0.12);
+    border-left-color: rgba(255, 166, 43, 0.38);
+    color: rgba(132, 77, 7, 0.82);
+}
+
+.stepper-form__warning {
+    margin-top: 0.6rem;
+    background: rgba(206, 104, 86, 0.14);
+    border-left: 5px solid rgba(206, 104, 86, 0.9);
+    padding: 0.7rem 0.9rem;
+    border-radius: 10px;
+    font-size: 0.87rem;
+    color: rgba(122, 36, 24, 0.95);
 }
 
 div[data-testid="stDataFrame"],
