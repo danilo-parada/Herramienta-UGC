@@ -7,6 +7,15 @@ from pathlib import Path
 from html import escape
 import re
 
+
+def _rerun_app() -> None:
+    """Trigger a Streamlit rerun compatible with multiple versions."""
+
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:  # pragma: no cover - fallback for older Streamlit versions
+        st.experimental_rerun()
+
 from core import db, utils, trl
 from core.db_trl import save_trl_result, get_trl_history
 from core.theme import load_theme
@@ -783,7 +792,7 @@ def _render_dimension_tab(dimension: str) -> None:
                 ):
                     _go_to_level(dimension, level_id)
                     st.session_state[_BANNER_KEY][dimension] = None
-                    st.experimental_rerun()
+                    _rerun_app()
             st.markdown("</div>", unsafe_allow_html=True)
 
         with st.expander(
@@ -859,7 +868,7 @@ def _render_dimension_tab(dimension: str) -> None:
                 _toggle_revision(dimension, level_id)
                 st.session_state[_BANNER_KEY][dimension] = None
                 st.toast("Guardado")
-                st.experimental_rerun()
+                _rerun_app()
 
             if guardar or siguiente or anterior:
                 success, error_message, banner = _handle_level_submission(
@@ -881,7 +890,7 @@ def _render_dimension_tab(dimension: str) -> None:
                     if anterior:
                         target = _next_level_id(dimension, level_id, -1)
                         _go_to_level(dimension, target)
-                    st.experimental_rerun()
+                    _rerun_app()
 
     st.divider()
     st.markdown("#### Subsanar evidencias")
@@ -907,7 +916,7 @@ def _render_dimension_tab(dimension: str) -> None:
                     _go_to_level(dimension, level_id)
                     st.session_state[_ERROR_KEY][dimension][level_id] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
                     st.session_state[_BANNER_KEY][dimension] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
-                    st.experimental_rerun()
+                    _rerun_app()
     else:
         st.caption("No hay niveles fuera de cálculo en esta pestaña.")
 
