@@ -727,14 +727,20 @@ def _set_level_state(
     st.session_state[_STATE_KEY][dimension][level_id] = state
 
 
-def _toggle_revision(dimension: str, level_id: int) -> None:
+def _set_revision_flag(dimension: str, level_id: int, value: bool) -> None:
     state = _level_state(dimension, level_id)
-    state["marcado_revision"] = not state.get("marcado_revision", False)
+    state["marcado_revision"] = value
     if state["marcado_revision"]:
         state["estado"] = "Revisión requerida"
     else:
         state["estado"] = state.get("estado_auto", "Pendiente")
     st.session_state[_STATE_KEY][dimension][level_id] = state
+
+
+def _toggle_revision(dimension: str, level_id: int) -> None:
+    state = _level_state(dimension, level_id)
+    nuevo_valor = not state.get("marcado_revision", False)
+    _set_revision_flag(dimension, level_id, nuevo_valor)
 
 
 def _sync_dimension_score(dimension: str) -> int:
@@ -1103,32 +1109,39 @@ def _render_dimension_tab(dimension: str) -> None:
                 if error_msg:
                     st.error(error_msg)
 
-                col_guardar, col_revision = st.columns([2, 1])
+                col_guardar, col_editar = st.columns([2, 1])
                 guardar = col_guardar.form_submit_button(
                     "Guardar",
                     type="primary",
                     disabled=not ready_to_save,
                 )
-                revision = col_revision.form_submit_button("Marcar para revisión")
+                editar = col_editar.form_submit_button("Editar")
 
-            if revision:
-                normalizado_revision = _normalize_question_responses(level, respuestas_dict)
-                respuesta_revision = (
-                    _aggregate_question_status(normalizado_revision)
-                    if preguntas
-                    else respuesta_manual
-                )
+            if editar:
+                normalizado_edicion = _normalize_question_responses(level, respuestas_dict)
+                if preguntas:
+                    respuesta_edicion = _aggregate_question_status(normalizado_edicion)
+                else:
+                    respuesta_edicion = respuesta_manual if respuesta_manual in {"VERDADERO", "FALSO"} else None
+
+                en_calculo = respuesta_edicion == "VERDADERO"
+                estado_auto = "Respondido (en cálculo)" if en_calculo else "Pendiente"
+
                 _set_level_state(
                     dimension,
                     level_id,
-                    respuesta=respuesta_revision,
-                    respuestas_preguntas=normalizado_revision,
+                    respuesta=respuesta_edicion,
+                    respuestas_preguntas=normalizado_edicion,
                     evidencia=evidencia_texto,
                     evidencias_preguntas=evidencias_dict_envio,
+                    estado_auto=estado_auto,
+                    en_calculo=en_calculo,
                 )
-                _toggle_revision(dimension, level_id)
+                _set_revision_flag(dimension, level_id, False)
                 st.session_state[_BANNER_KEY][dimension] = None
-                st.toast("Guardado")
+                st.session_state[_ERROR_KEY][dimension][level_id] = None
+                _sync_dimension_score(dimension)
+                st.toast("Actualizado")
                 _rerun_app()
 
             if guardar:
