@@ -837,7 +837,7 @@ def _render_dimension_tab(dimension: str) -> None:
                 f"<div class='level-card level-card--{status_class}' id='{dimension}-{level_id}'>",
                 unsafe_allow_html=True,
             )
-            header_cols = st.columns([4, 1])
+            header_cols = st.columns([4, 1, 0.6])
             with header_cols[0]:
                 st.markdown(
                     f"<div class='level-card__title'>Nivel {level_id}</div>",
@@ -848,15 +848,31 @@ def _render_dimension_tab(dimension: str) -> None:
                     f"<span class='level-card__chip level-card__chip--{status_class}'>{status}</span>",
                     unsafe_allow_html=True,
                 )
-                if st.button(
-                    "Responder",
-                    key=f"btn_open_{dimension}_{level_id}",
-                    type="secondary",
-                    use_container_width=True,
-                ):
-                    _go_to_level(dimension, level_id)
-                    st.session_state[_BANNER_KEY][dimension] = None
-                    _rerun_app()
+            with header_cols[2]:
+                popover_fn = getattr(st, "popover", None)
+                if callable(popover_fn):
+                    with popover_fn(
+                        "⋮",
+                        key=f"popover_{dimension}_{level_id}",
+                    ):
+                        st.markdown("**Acciones**")
+                        if st.button(
+                            "Editar",
+                            key=f"btn_edit_{dimension}_{level_id}",
+                            use_container_width=True,
+                        ):
+                            _go_to_level(dimension, level_id)
+                            st.session_state[_BANNER_KEY][dimension] = None
+                            _rerun_app()
+                else:
+                    if st.button(
+                        "⋮",
+                        key=f"btn_edit_fallback_{dimension}_{level_id}",
+                        help="Editar nivel",
+                    ):
+                        _go_to_level(dimension, level_id)
+                        st.session_state[_BANNER_KEY][dimension] = None
+                        _rerun_app()
             st.markdown("</div>", unsafe_allow_html=True)
 
         expander_label = f"Nivel {level_id} · {level['descripcion']}"
@@ -947,10 +963,8 @@ def _render_dimension_tab(dimension: str) -> None:
                 if error_msg:
                     st.error(error_msg)
 
-                col_guardar, col_siguiente, col_anterior, col_revision = st.columns(4)
+                col_guardar, col_revision = st.columns([2, 1])
                 guardar = col_guardar.form_submit_button("Guardar")
-                siguiente = col_siguiente.form_submit_button("Siguiente")
-                anterior = col_anterior.form_submit_button("Anterior")
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
             respuestas_dict = {
@@ -982,7 +996,7 @@ def _render_dimension_tab(dimension: str) -> None:
                 st.toast("Guardado")
                 _rerun_app()
 
-            if guardar or siguiente or anterior:
+            if guardar:
                 success, error_message, banner = _handle_level_submission(
                     dimension,
                     level_id,
@@ -997,12 +1011,7 @@ def _render_dimension_tab(dimension: str) -> None:
                     st.session_state[_ERROR_KEY][dimension][level_id] = None
                     _sync_dimension_score(dimension)
                     st.toast("Guardado")
-                    if guardar or siguiente:
-                        target = _next_level_id(dimension, level_id, 1)
-                        _go_to_level(dimension, target)
-                    if anterior:
-                        target = _next_level_id(dimension, level_id, -1)
-                        _go_to_level(dimension, target)
+                    st.session_state[_OPEN_KEY][dimension] = None
                     _rerun_app()
 
     st.divider()
@@ -1422,6 +1431,24 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     box-shadow: 0 12px 28px rgba(var(--shadow-color), 0.18);
     margin-bottom: 0.7rem;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.level-card--complete {
+    background: linear-gradient(145deg, #0c3d21, #16522f);
+    border: 1px solid rgba(12, 61, 33, 0.6);
+    box-shadow: 0 18px 34px rgba(12, 61, 33, 0.38);
+}
+
+.level-card--complete .level-card__title,
+.level-card--complete .level-card__intro,
+.level-card--complete .level-card__description {
+    color: #f3fff4;
+}
+
+.level-card--complete .level-card__chip {
+    background: rgba(237, 255, 239, 0.2);
+    border-color: rgba(237, 255, 239, 0.45);
+    color: #ffffff;
 }
 
 .level-card:hover {
