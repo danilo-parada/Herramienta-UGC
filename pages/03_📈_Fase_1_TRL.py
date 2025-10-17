@@ -852,11 +852,14 @@ def _render_dimension_tab(dimension: str) -> None:
             with header_cols[2]:
                 popover_fn = getattr(st, "popover", None)
                 if callable(popover_fn):
+                    # Streamlit popovers do not support custom keys, so we build
+                    # an "invisible" label based on zero-width spaces to keep each
+                    # widget identifier unique without showing extra text.
+                    invisible_label = "\u200b" * (level_id + 1)
                     with popover_fn(
-                        "",
+                        invisible_label,
                         icon=":material/more_vert:",
                         help="Acciones del nivel",
-                        key=f"popover_{dimension}_{level_id}",
                     ):
                         st.markdown("**Acciones**")
                         if st.button(
