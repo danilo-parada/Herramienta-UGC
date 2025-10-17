@@ -573,6 +573,14 @@ def _clean_text(value: str | None) -> str:
     return (value or "").strip()
 
 
+def _is_evidence_valid(texto: str | None) -> bool:
+    texto_limpio = _clean_text(texto)
+    if not texto_limpio:
+        return False
+    palabra_count = len(re.findall(r"[\wÀ-ÿ]+", texto_limpio))
+    return len(texto_limpio) >= STEP_CONFIG["min_evidence_chars"] and palabra_count > 5
+
+
 def _missing_required_evidences(
     level: dict,
     respuestas: dict[str, str | None] | None,
@@ -585,7 +593,7 @@ def _missing_required_evidences(
     faltantes: list[int] = []
     for idx, _ in enumerate(preguntas, start=1):
         clave = str(idx)
-        if respuestas.get(clave) == "VERDADERO" and not _clean_text(evidencias.get(clave)):
+        if respuestas.get(clave) == "VERDADERO" and not _is_evidence_valid(evidencias.get(clave)):
             faltantes.append(idx)
     return faltantes
 
@@ -672,10 +680,22 @@ def _update_ready_flag(dimension: str, level_id: int) -> None:
             if valor not in {"VERDADERO", "FALSO"}:
                 listo = False
                 break
+        if listo:
+            for idx in range(1, len(preguntas) + 1):
+                pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
+                evidencia_key = f"evid_{dimension}_{level_id}_{idx}"
+                if st.session_state.get(pregunta_key) == "VERDADERO" and not _is_evidence_valid(
+                    st.session_state.get(evidencia_key)
+                ):
+                    listo = False
+                    break
     else:
         answer_key = f"resp_{dimension}_{level_id}"
         valor = st.session_state.get(answer_key)
         listo = valor in {"VERDADERO", "FALSO"}
+        if listo and valor == "VERDADERO":
+            evidencia_key = f"evid_{dimension}_{level_id}"
+            listo = _is_evidence_valid(st.session_state.get(evidencia_key))
     st.session_state[_READY_KEY][dimension][level_id] = listo
 
 
@@ -871,9 +891,11 @@ def _handle_level_submission(
     banner_msg: str | None = None
 
     if preguntas:
-        faltantes = _missing_required_evidences(
-            level_data, normalizado, evidencias_normalizadas
-        )
+        faltantes = _missing_required_evidences(level_data, normalizado, evidencias_normalizadas)
+        if faltantes:
+            mensaje = "Agrega un medio de verificación en las respuestas VERDADERO para cerrar este nivel."
+            _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
+            return False, mensaje, mensaje
         if any(valor is None for valor in normalizado.values()):
             mensaje = "Responde VERDADERO o FALSO para cada pregunta."
             _set_level_state(
@@ -920,13 +942,17 @@ def _handle_level_submission(
 
     _set_level_state(dimension, level_id, respuesta=respuesta)
 
-    _set_level_state(
-        dimension,
-        level_id,
-        estado_auto="Respondido (en cálculo)",
-        en_calculo=True,
-    )
-    return True, None, banner_msg
+    if respuesta == "VERDADERO":
+        if len(evidencia) < STEP_CONFIG["min_evidence_chars"] or palabra_count <= 5:
+            mensaje = "Para cerrar el nivel, detalla el medio de verificación de la respuesta VERDADERA."
+            _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
+            return False, mensaje, mensaje
+        _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
+        return True, None, None
+
+    # respuesta == "FALSO"
+    _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
+    return True, None, None
 
 
 def _render_dimension_tab(dimension: str) -> None:
@@ -1018,14 +1044,14 @@ def _render_dimension_tab(dimension: str) -> None:
                         respuesta_actual = st.session_state.get(pregunta_key, "Sin respuesta")
                         evidencia_actual = st.session_state.get(evidencia_pregunta_key, "")
                         requiere_evidencia = respuesta_actual == "VERDADERO"
-                        tiene_evidencia = bool(_clean_text(evidencia_actual))
+                        evidencia_valida = _is_evidence_valid(evidencia_actual)
                         bloque_clases = ["question-block"]
-                        if respuesta_actual in {"VERDADERO", "FALSO"}:
+                        if respuesta_actual in {"VERDADERO", "FALSO"} and (
+                            not requiere_evidencia or evidencia_valida
+                        ):
                             bloque_clases.append("question-block--complete")
                         else:
                             bloque_clases.append("question-block--pending")
-                        if requiere_evidencia and not tiene_evidencia:
-                            bloque_clases.append("question-block--missing-evidence")
 
                         st.markdown(
                             f"<div class='{' '.join(bloque_clases)}'>",
@@ -1084,11 +1110,12 @@ def _render_dimension_tab(dimension: str) -> None:
                         respuesta_actual = st.session_state.get(pregunta_key)
                         evidencia_actual = st.session_state.get(evidencia_pregunta_key, "")
                         requiere_evidencia = respuesta_actual == "VERDADERO"
-                        if requiere_evidencia and not _clean_text(evidencia_actual):
+                        evidencia_valida = _is_evidence_valid(evidencia_actual)
+                        if requiere_evidencia and not evidencia_valida:
                             st.markdown(
                                 """
-                                <div class='question-block__hint question-block__hint--gentle'>
-                                    Puedes añadir un medio de verificación para reforzar esta respuesta marcada como VERDADERO.
+                                <div class='question-block__warning'>
+                                    Para cerrar este nivel, detalla el medio de verificación de esta respuesta marcada como VERDADERO.
                                 </div>
                                 """,
                                 unsafe_allow_html=True,
@@ -1163,12 +1190,13 @@ def _render_dimension_tab(dimension: str) -> None:
                         evidencias_dict_envio,
                     )
                     if faltantes_requisitos:
+                        ready_to_save = False
                         faltantes_str = ", ".join(str(idx) for idx in faltantes_requisitos)
                         st.markdown(
                             (
-                                "<div class='stepper-form__hint stepper-form__hint--soft'>"
-                                "Agrega un medio de verificación en las preguntas marcadas como VERDADERO ("
-                                f"{faltantes_str}) cuando dispongas del soporte."
+                                "<div class='stepper-form__warning'>"
+                                "Completa el medio de verificación en las preguntas marcadas como VERDADERO ("
+                                f"{faltantes_str})."
                                 "</div>"
                             ),
                             unsafe_allow_html=True,
@@ -1178,15 +1206,17 @@ def _render_dimension_tab(dimension: str) -> None:
                     if valor_manual in {"VERDADERO", "FALSO"}:
                         respuesta_manual = valor_manual
                     ready_to_save = respuesta_manual is not None
-                    if respuesta_manual == "VERDADERO" and not _clean_text(evidencia_texto):
-                        st.markdown(
-                            """
-                            <div class='stepper-form__hint stepper-form__hint--soft'>
-                                Puedes detallar un medio de verificación para respaldar la respuesta VERDADERA cuando lo tengas disponible.
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+                    if respuesta_manual == "VERDADERO":
+                        if not _is_evidence_valid(evidencia_texto):
+                            ready_to_save = False
+                            st.markdown(
+                                """
+                                <div class='stepper-form__warning'>
+                                    Para cerrar este nivel, detalla el medio de verificación de la respuesta VERDADERA.
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
 
                 st.session_state[_READY_KEY][dimension][level_id] = ready_to_save
 
@@ -1210,7 +1240,9 @@ def _render_dimension_tab(dimension: str) -> None:
                     "Guardar",
                     type="primary",
                     help=(
-                        "Responde todas las preguntas del nivel para cerrar el registro."
+                        "Se habilita el guardado aunque falten respuestas para permitir el envío"
+                        " de los cambios. El sistema validará que todas las preguntas tengan"
+                        " respuesta y evidencias cuando corresponda."
                         if not st.session_state[_READY_KEY][dimension].get(level_id, False)
                         else None
                     ),
@@ -1764,11 +1796,6 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     border-color: rgba(var(--shadow-color), 0.16);
 }
 
-.question-block--missing-evidence {
-    border-style: dashed;
-    border-color: rgba(255, 166, 43, 0.55);
-}
-
 .question-block__header {
     display: flex;
     gap: 0.85rem;
@@ -1818,12 +1845,6 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     color: rgba(132, 77, 7, 0.92);
 }
 
-.question-block__hint--gentle {
-    background: rgba(255, 193, 99, 0.12);
-    border-left-color: rgba(255, 166, 43, 0.4);
-    color: rgba(132, 77, 7, 0.82);
-}
-
 .question-block__warning {
     margin-top: 0.6rem;
     background: rgba(206, 104, 86, 0.14);
@@ -1854,12 +1875,6 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     border-radius: 10px;
     font-size: 0.86rem;
     color: rgba(132, 77, 7, 0.92);
-}
-
-.stepper-form__hint--soft {
-    background: rgba(255, 193, 99, 0.12);
-    border-left-color: rgba(255, 166, 43, 0.38);
-    color: rgba(132, 77, 7, 0.82);
 }
 
 .stepper-form__warning {
