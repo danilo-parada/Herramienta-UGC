@@ -94,6 +94,90 @@ CRL_LEVELS = [
     },
 ]
 
+FRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Idea de negocios inicial con una descripción vaga. No hay una visión clara sobre las necesidades y las opciones de financiamiento.",
+        "preguntas": [
+            "¿Tiene una idea de negocio inicial con una descripción?",
+            "¿Tiene poco o ningún conocimiento de las actividades y costos relevantes para verificar el potencial/factibilidad de la idea?",
+            "¿Tiene poco conocimiento de las diferentes opciones y tipos de financiamiento?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Descripción del concepto de negocios. Están definidas las necesidades y opciones de financiamiento para los hitos iniciales",
+        "preguntas": [
+            "¿Ha descrito las actividades iniciales y costos que permiten verificar el potencial/factibilidad de la idea (1-6 meses)?",
+            "¿Tiene un plan básico con opciones de financiamiento para los hitos iniciales (1-6 meses)?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Concepto de negocios bien descrito, con un plan de verificación inicial. Primer pequeño financiamiento “blando” (soft funding) asegurado",
+        "preguntas": [
+            "¿Tiene financiamiento suficiente para asegurar la ejecución de las actividades iniciales de verificación/factibilidad (1-6 meses)?",
+            "¿Conoce los diferentes tipos de financiamiento (propio, blando, de capital, de clientes, etc.) y las ventajas y desventajas de cada uno?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Se cuenta con un buen pitch y breve presentación del negocio. Se cuenta con un plan con diferentes opciones de financiamiento a lo largo del tiempo.",
+        "preguntas": [
+            "¿Tiene un buen pitch y una breve presentación del negocio?",
+            "¿Ha preparado un plan de financiamiento para verificar el potencial comercial de la idea para los siguientes 3 a 12 meses?",
+            "¿Ha identificado las fuentes de financiamiento relevantes?",
+            "¿Ha obtenido fondos suficientes para implementar una parte sustancial del plan de verificación?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Se cuenta con una presentación orientada al inversionista y material de apoyo que ha sido testeado. Se ha solicitado y obtenido un mayor financiamiento adicional (blandos u otros).",
+        "preguntas": [
+            "¿Ha elaborado y ensayado el pitch para obtener financiamiento en un ambiente relevante?",
+            "¿Tiene una hoja de cálculo con el presupuesto inicial de ganancias y pérdidas y el flujo de caja para los próximos 12 meses?",
+            "¿Ha decidido cómo abordar la estrategia de financiamiento y las fuentes de financiamiento para alcanzar un modelo de negocio viable?",
+            "¿Conoce y entiende los requisitos y las consecuencias del financiamiento externo sobre el modelo de negocio, el control y la propiedad de la compañía?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Presentación mejorada para el inversionista, la que incluye aspectos de negocios y financieros. Se ha decidido buscar inversores privados y se tomaron los primeros contactos.",
+        "preguntas": [
+            "¿Ha mejorado/actualizado el pitch para obtener financiamiento en una audiencia relevante?",
+            "¿Tiene un presupuesto de ingresos y pérdidas y flujo de efectivo para negocios/proyectos a 3-5 años que permite esclarecer la necesidad de financiamiento a corto y mediano plazo?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "El equipo presenta un caso de inversión sólido, el que incluye estados y planes. Existen conversaciones con inversionistas potenciales sobre una oferta",
+        "preguntas": [
+            "¿Tiene conversaciones con posibles fuentes de financiamiento externas en torno a una oferta definida (cuánto dinero, para qué, condiciones, valoración, etc.)?",
+            "¿La propuesta de financiamiento está completa, probada y comprobada, y existe un plan de negocios con proyecciones financieras y un plan de hitos?",
+            "¿Existen sistemas básicos de contabilidad y documentación para el seguimiento financiero?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Existe un orden y una estructura corporativa que permiten la inversión. Existen diálogos sobre los términos del acuerdo con los inversionistas interesados.",
+        "preguntas": [
+            "¿Ha tenido conversaciones concretas (a nivel de Hoja de Términos) con una o varias fuentes de financiamiento externas interesadas?",
+            "¿Está preparado y disponible todo el material necesario para el financiamiento externo (finanzas, plan de negocio, etc.)?",
+            "¿Existe una entidad jurídica correctamente establecida con una estructura de propiedad adecuada para la fuente de financiamiento visualizada?",
+            "¿Se ha recopilado y está disponible toda la documentación y acuerdos legales clave para una diligencia/revisión externa?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "La inversión fue obtenida. Las necesidades y las opciones de inversión adicionales son consideradas continuamente",
+        "preguntas": [
+            "¿Tiene financiamiento garantizado por al menos 6 a 12 meses de ejecución de acuerdo con el plan comercial/plan operativo actual?",
+            "¿Está totalmente implementado un sistema de seguimiento financiero y contable para el control continuo del estado financiero actual?",
+            "¿Existe un buen pronóstico/previsión para identificar las futuras necesidades de financiamiento?",
+        ],
+    },
+]
+
 TRL_LEVELS = [
     {
         "nivel": 1,
@@ -497,6 +581,41 @@ def _render_crl_tab():
         st.success(f"Nivel alcanzado: CRL {nivel_consecutivo}")
     else:
         st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel CRL.")
+
+
+def _render_frl_tab():
+    _init_irl_state()
+    st.markdown("#### Calculadora de madurez financiera (FRL)")
+    st.caption(
+        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
+    )
+    for level in FRL_LEVELS:
+        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
+        preguntas = level["preguntas"]
+        for idx, pregunta in enumerate(preguntas, start=1):
+            answer_key = f"irl_FRL_L{level['nivel']}_Q{idx}"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = "FALSO"
+            respuesta = st.radio(
+                pregunta,
+                options=["FALSO", "VERDADERO"],
+                horizontal=True,
+                key=answer_key,
+            )
+            if respuesta == "VERDADERO":
+                evidence_key = f"{answer_key}_evidencia"
+                st.text_input(
+                    "Acredite el medio de verificación con que cuenta",
+                    key=evidence_key,
+                )
+        st.divider()
+
+    nivel_consecutivo = _compute_consecutive_level("FRL", FRL_LEVELS)
+    st.session_state["irl_scores"]["FRL"] = nivel_consecutivo
+    if nivel_consecutivo:
+        st.success(f"Nivel alcanzado: FRL {nivel_consecutivo}")
+    else:
+        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel FRL.")
 
 
 def _render_brl_tab():
@@ -1014,6 +1133,8 @@ with st.container():
                 _render_iprl_tab()
             elif dimension == "TmRL":
                 _render_tmrl_tab()
+            elif dimension == "FRL":
+                _render_frl_tab()
             else:
                 _render_placeholder_tab(dimension)
     st.markdown("</div>", unsafe_allow_html=True)
