@@ -577,6 +577,7 @@ def _init_irl_state() -> None:
                     "respuesta": None,
                     "respuestas_preguntas": {},
                     "evidencia": "",
+                    "evidencias_preguntas": {},
                     "estado": "Pendiente",
                     "estado_auto": "Pendiente",
                     "en_calculo": False,
@@ -596,6 +597,15 @@ def _init_irl_state() -> None:
                 valor = existentes.get(clave)
                 normalizado[clave] = valor if valor in {"VERDADERO", "FALSO"} else None
             state["respuestas_preguntas"] = normalizado
+            evidencias_existentes = state.get("evidencias_preguntas")
+            if not isinstance(evidencias_existentes, dict):
+                evidencias_existentes = {}
+            normalizado_evidencias: dict[str, str] = {}
+            for idx, _ in enumerate(preguntas, start=1):
+                clave = str(idx)
+                valor = evidencias_existentes.get(clave)
+                normalizado_evidencias[clave] = str(valor) if valor is not None else ""
+            state["evidencias_preguntas"] = normalizado_evidencias
             st.session_state[_STATE_KEY][dimension][level["nivel"]] = state
     if _OPEN_KEY not in st.session_state:
         st.session_state[_OPEN_KEY] = {
@@ -621,6 +631,7 @@ def _set_level_state(
     respuesta: str | None = None,
     respuestas_preguntas: dict[str, str | None] | None = None,
     evidencia: str | None = None,
+    evidencias_preguntas: dict[str, str] | None = None,
     estado_auto: str | None = None,
     en_calculo: bool | None = None,
 ) -> None:
@@ -631,6 +642,8 @@ def _set_level_state(
         state["respuestas_preguntas"] = respuestas_preguntas
     if evidencia is not None:
         state["evidencia"] = evidencia
+    if evidencias_preguntas is not None:
+        state["evidencias_preguntas"] = evidencias_preguntas
     if estado_auto is not None:
         state["estado_auto"] = estado_auto
     if en_calculo is not None:
@@ -738,20 +751,33 @@ def _handle_level_submission(
     respuestas_preguntas: dict[str, str | None],
     evidencia: str,
     *,
+    evidencias_preguntas: dict[str, str] | None = None,
     respuesta_manual: str | None = None,
 ) -> tuple[bool, str | None, str | None]:
     evidencia = evidencia.strip()
     niveles = LEVEL_DEFINITIONS.get(dimension, [])
     level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), {})
+    preguntas = level_data.get("preguntas") or []
     normalizado = _normalize_question_responses(level_data, respuestas_preguntas or {})
+    evidencias_normalizadas: dict[str, str] | None = None
+    if preguntas and evidencias_preguntas is not None:
+        evidencias_normalizadas = {}
+        for idx, _ in enumerate(preguntas, start=1):
+            clave = str(idx)
+            evidencias_normalizadas[clave] = (evidencias_preguntas.get(clave, "") or "").strip()
+        evidencia = " \n".join(
+            texto for texto in evidencias_normalizadas.values() if texto
+        ).strip()
+    elif evidencias_preguntas is not None:
+        evidencias_normalizadas = {k: str(v) for k, v in evidencias_preguntas.items()}
     _set_level_state(
         dimension,
         level_id,
         respuestas_preguntas=normalizado,
         evidencia=evidencia,
+        evidencias_preguntas=evidencias_normalizadas,
     )
 
-    preguntas = level_data.get("preguntas") or []
     if preguntas:
         if any(valor is None for valor in normalizado.values()):
             mensaje = "Responde VERDADERO o FALSO para cada pregunta."
@@ -889,20 +915,26 @@ def _render_dimension_tab(dimension: str) -> None:
             preguntas = level.get("preguntas") or []
             answer_key = f"resp_{dimension}_{level_id}"
             evidencia_key = f"evid_{dimension}_{level_id}"
+            evidencias_preguntas_state = state.get("evidencias_preguntas") or {}
             if evidencia_key not in st.session_state:
                 st.session_state[evidencia_key] = state.get("evidencia", "")
 
             existentes = state.get("respuestas_preguntas") or {}
             question_keys: list[tuple[str, str]] = []
+            evidencia_question_keys: list[tuple[str, str]] = []
             for idx, _ in enumerate(preguntas, start=1):
                 idx_str = str(idx)
                 pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
+                evidencia_pregunta_key = f"evid_{dimension}_{level_id}_{idx}"
                 question_keys.append((idx_str, pregunta_key))
+                evidencia_question_keys.append((idx_str, evidencia_pregunta_key))
                 if pregunta_key not in st.session_state:
                     default_option = existentes.get(idx_str)
                     st.session_state[pregunta_key] = (
                         default_option if default_option in {"VERDADERO", "FALSO"} else "Sin respuesta"
                     )
+                if evidencia_pregunta_key not in st.session_state:
+                    st.session_state[evidencia_pregunta_key] = evidencias_preguntas_state.get(idx_str, "")
 
             if not preguntas:
                 current_answer = state.get("respuesta")
@@ -920,6 +952,7 @@ def _render_dimension_tab(dimension: str) -> None:
                     st.markdown("**Evalúa cada pregunta:**")
                     for idx, pregunta in enumerate(preguntas, start=1):
                         pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
+                        evidencia_pregunta_key = f"evid_{dimension}_{level_id}_{idx}"
                         fila = st.container()
                         with fila:
                             texto_col, opciones_col = st.columns([5, 2])
@@ -933,6 +966,27 @@ def _render_dimension_tab(dimension: str) -> None:
                                     horizontal=True,
                                     label_visibility="collapsed",
                                 )
+                        evidencia_texto = st.text_area(
+                            "Medio de verificación (texto)",
+                            value=st.session_state[evidencia_pregunta_key],
+                            key=evidencia_pregunta_key,
+                            placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
+                            height=160,
+                            max_chars=STEP_CONFIG["max_char_limit"],
+                        )
+                        contador = len(evidencia_texto.strip())
+                        contador_html = (
+                            f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
+                            f"{contador}/{STEP_CONFIG['soft_char_limit']}"
+                            "</div>"
+                        )
+                        st.markdown(contador_html, unsafe_allow_html=True)
+                        if evidencia_texto:
+                            palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
+                            if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
+                                st.info(
+                                    "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
+                                )
                 else:
                     st.radio(
                         "Responder",
@@ -941,29 +995,40 @@ def _render_dimension_tab(dimension: str) -> None:
                         horizontal=True,
                     )
 
-                evidencia_texto = st.text_area(
-                    "Medio de verificación (texto)",
-                    value=st.session_state[evidencia_key],
-                    key=evidencia_key,
-                    placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
-                    height=160,
-                    max_chars=STEP_CONFIG["max_char_limit"],
-                )
+                evidencia_texto = ""
+                if preguntas:
+                    evidencias_dict = {
+                        idx_str: (st.session_state.get(e_key) or "")
+                        for idx_str, e_key in evidencia_question_keys
+                    }
+                    evidencia_texto = " \n".join(
+                        texto.strip() for texto in evidencias_dict.values() if texto.strip()
+                    )
+                    st.session_state[evidencia_key] = evidencia_texto
+                else:
+                    evidencia_texto = st.text_area(
+                        "Medio de verificación (texto)",
+                        value=st.session_state[evidencia_key],
+                        key=evidencia_key,
+                        placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
+                        height=160,
+                        max_chars=STEP_CONFIG["max_char_limit"],
+                    )
 
-                contador = len(evidencia_texto.strip())
-                contador_html = (
-                    f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
-                    f"{contador}/{STEP_CONFIG['soft_char_limit']}"
-                    "</div>"
-                )
-                st.markdown(contador_html, unsafe_allow_html=True)
+                    contador = len(evidencia_texto.strip())
+                    contador_html = (
+                        f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
+                        f"{contador}/{STEP_CONFIG['soft_char_limit']}"
+                        "</div>"
+                    )
+                    st.markdown(contador_html, unsafe_allow_html=True)
 
-                if evidencia_texto:
-                    palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
-                    if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
-                        st.info(
-                            "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
-                        )
+                    if evidencia_texto:
+                        palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
+                        if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
+                            st.info(
+                                "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
+                            )
 
                 error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
                 if error_msg:
@@ -977,6 +1042,14 @@ def _render_dimension_tab(dimension: str) -> None:
                 idx_str: (st.session_state.get(key) if st.session_state.get(key) in {"VERDADERO", "FALSO"} else None)
                 for idx_str, key in question_keys
             }
+            evidencias_dict_envio = (
+                {
+                    idx_str: (st.session_state.get(key) or "")
+                    for idx_str, key in evidencia_question_keys
+                }
+                if preguntas
+                else None
+            )
             respuesta_manual = None
             if not preguntas:
                 valor_manual = st.session_state.get(answer_key)
@@ -996,6 +1069,7 @@ def _render_dimension_tab(dimension: str) -> None:
                     respuesta=respuesta_revision,
                     respuestas_preguntas=normalizado_revision,
                     evidencia=evidencia_texto,
+                    evidencias_preguntas=evidencias_dict_envio,
                 )
                 _toggle_revision(dimension, level_id)
                 st.session_state[_BANNER_KEY][dimension] = None
@@ -1008,6 +1082,7 @@ def _render_dimension_tab(dimension: str) -> None:
                     level_id,
                     respuestas_dict,
                     evidencia_texto,
+                    evidencias_preguntas=evidencias_dict_envio,
                     respuesta_manual=respuesta_manual,
                 )
                 st.session_state[_BANNER_KEY][dimension] = banner
