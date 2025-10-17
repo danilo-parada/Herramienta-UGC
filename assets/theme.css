@@ -33,6 +33,10 @@ section[data-testid="stSidebar"] > div {
   color: #f7f4ef;
 }
 
+section[data-testid="stSidebar"] * {
+  color: #fefcf8 !important;
+}
+
 section[data-testid="stSidebar"] .stButton > button,
 section[data-testid="stSidebar"] .stDownloadButton > button {
   background: linear-gradient(135deg, var(--forest-500), var(--forest-700));
