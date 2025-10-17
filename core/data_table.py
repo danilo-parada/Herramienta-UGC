@@ -73,7 +73,7 @@ def _pagination_state(
     def _on_change() -> None:
         _reset_page(page_state_key)
 
-    col_size, col_summary, col_prev, col_next = st.columns([1.6, 2, 1, 1])
+    col_size, col_summary = st.columns([1.6, 2])
 
     with col_size:
         st.selectbox(
@@ -100,24 +100,6 @@ def _pagination_state(
             )
         else:
             st.empty()
-
-    with col_prev:
-        if st.button("Anterior", disabled=current_page <= 1, key=f"{state_key}__prev"):
-            st.session_state[page_state_key] = max(1, current_page - 1)
-            current_page = st.session_state[page_state_key]
-            start = (current_page - 1) * page_size
-            end = min(total_rows, start + page_size)
-
-    with col_next:
-        if st.button(
-            "Siguiente",
-            disabled=current_page >= total_pages,
-            key=f"{state_key}__next",
-        ):
-            st.session_state[page_state_key] = min(total_pages, current_page + 1)
-            current_page = st.session_state[page_state_key]
-            start = (current_page - 1) * page_size
-            end = min(total_rows, start + page_size)
 
     return TableState(key=state_key, page=current_page, page_size=page_size, total_rows=total_rows)
 

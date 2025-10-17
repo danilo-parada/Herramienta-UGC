@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from html import escape
 import re
+from typing import Any
 
 
 def _rerun_app() -> None:
@@ -559,6 +560,7 @@ _STATE_KEY = "irl_stepper_state"
 _ERROR_KEY = "irl_stepper_errors"
 _BANNER_KEY = "irl_stepper_banner"
 _CLOSE_EXPANDER_KEY = "irl_close_expander"
+_READY_KEY = "irl_level_ready"
 _EDIT_MODE_KEY = "irl_level_edit_mode"
 
 _STATUS_CLASS_MAP = {
@@ -648,6 +650,20 @@ def _init_irl_state() -> None:
                     state.get("respuesta_guardada", state.get("en_calculo", False))
                 )
             st.session_state[_STATE_KEY][dimension][level["nivel"]] = state
+    if _EDIT_MODE_KEY not in st.session_state:
+        st.session_state[_EDIT_MODE_KEY] = {}
+    for dimension in STEP_TABS:
+        if dimension not in st.session_state[_EDIT_MODE_KEY]:
+            st.session_state[_EDIT_MODE_KEY][dimension] = {}
+        for level in LEVEL_DEFINITIONS.get(dimension, []):
+            level_id = level["nivel"]
+            if level_id not in st.session_state[_EDIT_MODE_KEY][dimension]:
+                en_calculo = bool(
+                    st.session_state[_STATE_KEY][dimension][level_id].get("en_calculo", False)
+                )
+            else:
+                listo = level_state.get("respuesta") in {"VERDADERO", "FALSO"}
+            st.session_state[_READY_KEY][dimension][level["nivel"]] = listo
     if _EDIT_MODE_KEY not in st.session_state:
         st.session_state[_EDIT_MODE_KEY] = {}
     for dimension in STEP_TABS:
@@ -928,20 +944,11 @@ def _render_dimension_tab(dimension: str) -> None:
             card_classes.append("level-card--answered")
         if st.session_state[_ERROR_KEY][dimension].get(level_id):
             card_classes.append("level-card--error")
-        preguntas_actuales = level.get("preguntas") or []
-        if preguntas_actuales:
-            guardadas_actuales = state.get("preguntas_guardadas") or {}
-            all_guardadas = all(
-                guardadas_actuales.get(str(idx), False)
-                for idx in range(1, len(preguntas_actuales) + 1)
-            )
-        else:
-            all_guardadas = bool(state.get("respuesta_guardada"))
         edit_mode = st.session_state[_EDIT_MODE_KEY][dimension].get(
             level_id,
-            not (state.get("en_calculo") and all_guardadas),
+            not state.get("en_calculo"),
         )
-        locked = bool(state.get("en_calculo")) and all_guardadas and not edit_mode
+        locked = bool(state.get("en_calculo")) and not edit_mode
         if locked:
             card_classes.append("level-card--locked")
         elif edit_mode:
@@ -995,13 +1002,9 @@ def _render_dimension_tab(dimension: str) -> None:
 
                 if locked:
                     st.markdown(
-                        "<div class='level-card__lock-hint'>🔒 Nivel guardado. Usa <strong>Editar</strong> para actualizar las respuestas cuando lo necesites.</div>",
+                        "<div class='level-card__lock-hint'>🔒 Nivel guardado. Pulsa <strong>Editar</strong> para modificar las respuestas.</div>",
                         unsafe_allow_html=True,
                     )
-
-                error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
-                if error_msg:
-                    st.error(error_msg)
 
                 if preguntas:
                     st.markdown("**Evalúa cada pregunta:**")
@@ -1024,6 +1027,8 @@ def _render_dimension_tab(dimension: str) -> None:
                             bloque_clases.append("question-block--locked")
                         else:
                             bloque_clases.append("question-block--pending")
+                        if locked:
+                            bloque_clases.append("question-block--locked")
 
                         st.markdown(
                             f"<div class='{' '.join(bloque_clases)}'>",
@@ -1058,7 +1063,7 @@ def _render_dimension_tab(dimension: str) -> None:
                                 key=pregunta_key,
                                 horizontal=True,
                                 label_visibility="collapsed",
-                                disabled=question_saved,
+                                disabled=locked,
                             )
 
                         evidencia_texto = ""
@@ -1070,7 +1075,6 @@ def _render_dimension_tab(dimension: str) -> None:
                                 placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
                                 height=100,
                                 max_chars=STEP_CONFIG["max_char_limit"],
-                                disabled=question_saved,
                             )
                             contador = len(_clean_text(evidencia_texto))
                             contador_html = (
@@ -1079,106 +1083,14 @@ def _render_dimension_tab(dimension: str) -> None:
                                 "</div>"
                             )
                             st.markdown(contador_html, unsafe_allow_html=True)
-                            evidencia_valida = _is_evidence_valid(st.session_state.get(evidencia_pregunta_key))
                         else:
                             st.session_state[evidencia_pregunta_key] = ""
 
-                        if requiere_evidencia and not evidencia_valida and not question_saved:
+                        if requiere_evidencia and not _is_evidence_valid(st.session_state[evidencia_pregunta_key]):
                             st.markdown(
                                 "<div class='question-block__error'>Escribe el medio de verificación para guardar como VERDADERO.</div>",
                                 unsafe_allow_html=True,
                             )
-
-                        ready_to_save_question = respuesta_actual in {"VERDADERO", "FALSO"} and (
-                            respuesta_actual == "FALSO" or evidencia_valida
-                        )
-
-                        col_guardar, col_editar = st.columns([2, 1])
-                        guardar_q = col_guardar.form_submit_button(
-                            "Guardar respuesta",
-                            key=f"guardar_{dimension}_{level_id}_{idx}",
-                            type="primary",
-                            disabled=question_saved or not ready_to_save_question,
-                        )
-                        editar_q = col_editar.form_submit_button(
-                            "Editar",
-                            key=f"editar_{dimension}_{level_id}_{idx}",
-                            disabled=not question_saved,
-                        )
-
-                        if guardar_q:
-                            respuestas_guardadas[idx_str] = respuesta_actual
-                            evidencias_guardadas[idx_str] = (
-                                _clean_text(st.session_state.get(evidencia_pregunta_key))
-                                if respuesta_actual == "VERDADERO"
-                                else ""
-                            )
-                            preguntas_guardadas_state[idx_str] = True
-                            _set_level_state(
-                                dimension,
-                                level_id,
-                                respuestas_preguntas=respuestas_guardadas,
-                                evidencias_preguntas=evidencias_guardadas,
-                                preguntas_guardadas=preguntas_guardadas_state,
-                                estado_auto="Pendiente",
-                                en_calculo=False,
-                            )
-                            st.session_state[_ERROR_KEY][dimension][level_id] = None
-                            st.session_state[_BANNER_KEY][dimension] = None
-                            todos_guardados = all(
-                                preguntas_guardadas_state.get(str(i), False)
-                                for i in range(1, len(preguntas) + 1)
-                            )
-                            if todos_guardados:
-                                evidencias_envio = {
-                                    str(i): _clean_text(evidencias_guardadas.get(str(i), ""))
-                                    for i in range(1, len(preguntas) + 1)
-                                }
-                                evidencia_compuesta = " \n".join(
-                                    texto for texto in evidencias_envio.values() if texto
-                                )
-                                success, error_message, banner = _handle_level_submission(
-                                    dimension,
-                                    level_id,
-                                    respuestas_guardadas,
-                                    evidencia_compuesta,
-                                    evidencias_preguntas=evidencias_envio,
-                                    respuesta_manual=None,
-                                )
-                                st.session_state[_BANNER_KEY][dimension] = banner
-                                if error_message:
-                                    st.session_state[_ERROR_KEY][dimension][level_id] = error_message
-                                elif success:
-                                    st.session_state[_ERROR_KEY][dimension][level_id] = None
-                                    _set_level_state(
-                                        dimension,
-                                        level_id,
-                                        preguntas_guardadas=preguntas_guardadas_state,
-                                    )
-                                    _sync_dimension_score(dimension)
-                                    _set_revision_flag(dimension, level_id, False)
-                                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = False
-                                    st.session_state[_CLOSE_EXPANDER_KEY] = (dimension, level_id)
-                                    st.toast("Nivel guardado")
-                                    _rerun_app()
-                            else:
-                                st.toast("Respuesta guardada")
-                                _rerun_app()
-
-                        if editar_q:
-                            preguntas_guardadas_state[idx_str] = False
-                            _set_level_state(
-                                dimension,
-                                level_id,
-                                preguntas_guardadas=preguntas_guardadas_state,
-                                estado_auto="Pendiente",
-                                en_calculo=False,
-                            )
-                            st.session_state[_ERROR_KEY][dimension][level_id] = None
-                            st.session_state[_BANNER_KEY][dimension] = None
-                            _sync_dimension_score(dimension)
-                            st.toast("Edición activada")
-                            _rerun_app()
 
                         st.markdown("</div>", unsafe_allow_html=True)
                 else:
@@ -1188,11 +1100,22 @@ def _render_dimension_tab(dimension: str) -> None:
                         options=["VERDADERO", "FALSO"],
                         key=answer_key,
                         horizontal=True,
-                        disabled=respuesta_guardada_state,
+                        disabled=locked,
                     )
 
-                    evidencia_texto = ""
-                    if respuesta_actual == "VERDADERO":
+                evidencia_texto = ""
+                if preguntas:
+                    evidencias_dict_envio = {
+                        idx_str: _clean_text(st.session_state.get(e_key))
+                        for idx_str, e_key in evidencia_question_keys
+                    }
+                    evidencia_texto = " \n".join(
+                        texto for texto in evidencias_dict_envio.values() if texto
+                    )
+                    st.session_state[evidencia_key] = evidencia_texto
+                else:
+                    respuesta_manual_actual = st.session_state.get(answer_key, "FALSO")
+                    if respuesta_manual_actual == "VERDADERO":
                         evidencia_texto = st.text_area(
                             "Medio de verificación (texto)",
                             value=st.session_state[evidencia_key],
@@ -1200,8 +1123,8 @@ def _render_dimension_tab(dimension: str) -> None:
                             placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
                             height=110,
                             max_chars=STEP_CONFIG["max_char_limit"],
-                            disabled=respuesta_guardada_state,
                         )
+
                         contador = len(_clean_text(evidencia_texto))
                         contador_html = (
                             f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
@@ -1212,69 +1135,61 @@ def _render_dimension_tab(dimension: str) -> None:
                     else:
                         st.session_state[evidencia_key] = ""
 
-                    if respuesta_actual == "VERDADERO" and not _is_evidence_valid(st.session_state[evidencia_key]):
-                        st.markdown(
-                            "<div class='question-block__error'>Escribe el medio de verificación para guardar como VERDADERO.</div>",
-                            unsafe_allow_html=True,
-                        )
-
                     ready_manual = respuesta_actual in {"VERDADERO", "FALSO"} and (
                         respuesta_actual == "FALSO" or _is_evidence_valid(st.session_state[evidencia_key])
                     )
 
-                    col_guardar, col_editar = st.columns([2, 1])
-                    guardar_manual = col_guardar.form_submit_button(
-                        "Guardar respuesta",
-                        key=f"guardar_{dimension}_{level_id}_manual",
-                        type="primary",
-                        disabled=respuesta_guardada_state or not ready_manual,
-                    )
-                    editar_manual = col_editar.form_submit_button(
-                        "Editar",
-                        key=f"editar_{dimension}_{level_id}_manual",
-                        disabled=not respuesta_guardada_state,
-                    )
+                st.session_state[_READY_KEY][dimension][level_id] = ready_to_save
 
-                    if guardar_manual:
-                        evidencia_limpia = _clean_text(st.session_state[evidencia_key])
-                        success, error_message, banner = _handle_level_submission(
-                            dimension,
-                            level_id,
-                            {},
-                            evidencia_limpia,
-                            evidencias_preguntas=None,
-                            respuesta_manual=respuesta_actual,
-                        )
-                        st.session_state[_BANNER_KEY][dimension] = banner
-                        if error_message:
-                            st.session_state[_ERROR_KEY][dimension][level_id] = error_message
-                        elif success:
-                            st.session_state[_ERROR_KEY][dimension][level_id] = None
-                            _set_level_state(
-                                dimension,
-                                level_id,
-                                respuesta_guardada=True,
-                            )
-                            _sync_dimension_score(dimension)
-                            _set_revision_flag(dimension, level_id, False)
-                            st.session_state[_EDIT_MODE_KEY][dimension][level_id] = False
-                            st.session_state[_CLOSE_EXPANDER_KEY] = (dimension, level_id)
-                            st.toast("Nivel guardado")
-                            _rerun_app()
+                error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
+                if error_msg:
+                    st.error(error_msg)
 
-                    if editar_manual:
-                        _set_level_state(
-                            dimension,
-                            level_id,
-                            respuesta_guardada=False,
-                            estado_auto="Pendiente",
-                            en_calculo=False,
-                        )
-                        st.session_state[_ERROR_KEY][dimension][level_id] = None
-                        st.session_state[_BANNER_KEY][dimension] = None
-                        _sync_dimension_score(dimension)
-                        st.toast("Edición activada")
-                        _rerun_app()
+                col_guardar, col_editar = st.columns([2, 1])
+                guardar = col_guardar.form_submit_button(
+                    "Guardar",
+                    type="primary",
+                    disabled=locked or not ready_to_save,
+                )
+                show_cancel = bool(state.get("en_calculo")) and edit_mode and not locked
+                editar_label = "Cancelar" if show_cancel else "Editar"
+                editar_disabled = False
+                if not state.get("en_calculo") and edit_mode:
+                    editar_disabled = True
+                editar = col_editar.form_submit_button(editar_label, disabled=editar_disabled)
+
+            if editar:
+                if locked:
+                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = True
+                    st.toast("Modo edición activado")
+                    _rerun_app()
+                elif state.get("en_calculo"):
+                    _restore_level_form_values(dimension, level_id)
+                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = False
+                    _update_ready_flag(dimension, level_id)
+                    st.toast("Cambios descartados")
+                    _rerun_app()
+
+            if guardar:
+                success, error_message, banner = _handle_level_submission(
+                    dimension,
+                    level_id,
+                    respuestas_dict,
+                    evidencia_texto,
+                    evidencias_preguntas=evidencias_dict_envio,
+                    respuesta_manual=respuesta_manual,
+                )
+                st.session_state[_BANNER_KEY][dimension] = banner
+                if error_message:
+                    st.session_state[_ERROR_KEY][dimension][level_id] = error_message
+                else:
+                    st.session_state[_ERROR_KEY][dimension][level_id] = None
+                    _sync_dimension_score(dimension)
+                    _set_revision_flag(dimension, level_id, False)
+                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = False
+                    st.session_state[_CLOSE_EXPANDER_KEY] = (dimension, level_id)
+                    st.toast("Guardado")
+                    _rerun_app()
 
         if st.session_state.get(_CLOSE_EXPANDER_KEY) == (dimension, level_id):
             st.session_state[_CLOSE_EXPANDER_KEY] = None
@@ -1322,6 +1237,88 @@ def _collect_dimension_responses() -> pd.DataFrame:
 
     return pd.DataFrame(registros)
 
+
+
+def _level_has_response(state: dict | None) -> bool:
+    if not state:
+        return False
+
+    estado_auto = state.get("estado_auto")
+    if estado_auto and estado_auto != "Pendiente":
+        return True
+
+    if state.get("en_calculo"):
+        return True
+
+    estado = state.get("estado")
+    if estado and estado != "Pendiente":
+        return True
+
+    if state.get("marcado_revision"):
+        return True
+
+    return False
+
+
+def _format_answer_display(valor: str | None, state: dict | None) -> str:
+    if valor == "VERDADERO":
+        return "Verdadero"
+
+    if valor == "FALSO":
+        return "Falso" if _level_has_response(state) else "No respondido"
+
+    return "No respondido"
+
+
+def _collect_dimension_details() -> dict[str, dict[str, Any]]:
+    _init_irl_state()
+    dimensiones_ids = trl.ids_dimensiones()
+    etiquetas = dict(zip(dimensiones_ids, trl.labels_dimensiones()))
+    detalles: dict[str, dict[str, Any]] = {}
+
+    for dimension in dimensiones_ids:
+        niveles = LEVEL_DEFINITIONS.get(dimension, [])
+        filas: list[dict[str, Any]] = []
+        for level in niveles:
+            nivel_id = level.get("nivel")
+            state = _level_state(dimension, nivel_id)
+            estado_nivel = state.get("estado", "Pendiente")
+            preguntas = level.get("preguntas") or []
+            if preguntas:
+                respuestas = state.get("respuestas_preguntas") or {}
+                evidencias_preguntas = state.get("evidencias_preguntas") or {}
+                for idx, pregunta in enumerate(preguntas, start=1):
+                    idx_str = str(idx)
+                    filas.append(
+                        {
+                            "Nivel": nivel_id,
+                            "Descripción del nivel": level.get("descripcion", ""),
+                            "Pregunta": pregunta,
+                            "Respuesta": _format_answer_display(
+                                respuestas.get(idx_str), state
+                            ),
+                            "Medio de verificación": evidencias_preguntas.get(idx_str) or "—",
+                            "Estado del nivel": estado_nivel,
+                        }
+                    )
+            else:
+                filas.append(
+                    {
+                        "Nivel": nivel_id,
+                        "Descripción del nivel": level.get("descripcion", ""),
+                        "Pregunta": "—",
+                        "Respuesta": _format_answer_display(state.get("respuesta"), state),
+                        "Medio de verificación": state.get("evidencia") or "—",
+                        "Estado del nivel": estado_nivel,
+                    }
+                )
+
+        detalles[dimension] = {
+            "label": etiquetas.get(dimension, dimension),
+            "rows": filas,
+        }
+
+    return detalles
 
 
 st.set_page_config(page_title="Fase 1 - Evaluacion TRL", page_icon="🌲", layout="wide")
@@ -2045,7 +2042,6 @@ st.markdown(
     """
     <div class="page-intro">
         <div>
-            <span class="badge-soft">Fase 1 · IRL / TRL</span>
             <h1>Evaluacion estrategica de madurez tecnologica</h1>
             <p>
                 Priorizamos proyectos del portafolio maestro para registrar evidencias por dimension, estimar el TRL e impulsar el
@@ -2251,25 +2247,34 @@ with st.container():
 with st.container():
     st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
     df_respuestas = _collect_dimension_responses()
-    if not df_respuestas.empty:
-        resumen_vista = pd.DataFrame(
-            [
-                {
-                    "Dimensión": fila.get("etiqueta", fila.get("dimension")),
-                    "Nivel alcanzado": int(fila["nivel"]) if pd.notna(fila["nivel"]) else "—",
-                    "Evidencias acreditadas": fila.get("evidencia") or "—",
-                }
-                for _, fila in df_respuestas.iterrows()
-            ]
-        )
+    detalles_dimensiones = _collect_dimension_details()
+    with st.expander('Detalle de niveles por dimension', expanded=False):
+        if df_respuestas.empty:
+            st.info("Aún no hay niveles respondidos en esta evaluación.")
 
-        with st.expander('Detalle de niveles por dimension', expanded=False):
-            render_table(
-                resumen_vista,
-                key='fase1_detalle_dimensiones',
-                include_actions=False,
-                hide_index=True,
-            )
+        if detalles_dimensiones:
+            tab_labels = [
+                f"{info['label']}" if info["label"] else dimension
+                for dimension, info in detalles_dimensiones.items()
+            ]
+            st.markdown("**Preguntas y respuestas por dimensión**")
+            tabs = st.tabs(tab_labels)
+            for idx, (dimension, info) in enumerate(detalles_dimensiones.items()):
+                with tabs[idx]:
+                    detalle_df = pd.DataFrame(info["rows"])
+                    if detalle_df.empty:
+                        st.info("No hay niveles configurados para esta dimensión.")
+                    else:
+                        render_table(
+                            detalle_df,
+                            key=f'fase1_detalle_dimensiones_{dimension}',
+                            include_actions=False,
+                            hide_index=True,
+                            page_size_options=(10, 25, 50),
+                            default_page_size=10,
+                        )
+        else:
+            st.warning("No se encontraron definiciones de niveles para las dimensiones IRL.")
     puntaje = trl.calcular_trl(df_respuestas[["dimension", "nivel", "evidencia"]]) if not df_respuestas.empty else None
     st.metric("Nivel TRL alcanzado", f"{puntaje:.1f}" if puntaje is not None else "-")
 
@@ -2314,11 +2319,9 @@ with st.container():
             .set_index("Dimensión")
         )
         with st.expander('Resumen numerico IRL', expanded=False):
-            render_table(
+            st.dataframe(
                 resumen_df,
-                key='fase1_resumen_irl',
-                include_actions=False,
-                hide_index=False,
+                use_container_width=True,
             )
 
     with radar_col_right:
