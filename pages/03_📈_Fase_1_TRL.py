@@ -560,6 +560,7 @@ _ERROR_KEY = "irl_stepper_errors"
 _BANNER_KEY = "irl_stepper_banner"
 _CLOSE_EXPANDER_KEY = "irl_close_expander"
 _READY_KEY = "irl_level_ready"
+_EDIT_MODE_KEY = "irl_level_edit_mode"
 
 _STATUS_CLASS_MAP = {
     "Pendiente": "pending",
@@ -648,6 +649,18 @@ def _init_irl_state() -> None:
             else:
                 listo = level_state.get("respuesta") in {"VERDADERO", "FALSO"}
             st.session_state[_READY_KEY][dimension][level["nivel"]] = listo
+    if _EDIT_MODE_KEY not in st.session_state:
+        st.session_state[_EDIT_MODE_KEY] = {}
+    for dimension in STEP_TABS:
+        if dimension not in st.session_state[_EDIT_MODE_KEY]:
+            st.session_state[_EDIT_MODE_KEY][dimension] = {}
+        for level in LEVEL_DEFINITIONS.get(dimension, []):
+            level_id = level["nivel"]
+            if level_id not in st.session_state[_EDIT_MODE_KEY][dimension]:
+                en_calculo = bool(
+                    st.session_state[_STATE_KEY][dimension][level_id].get("en_calculo", False)
+                )
+                st.session_state[_EDIT_MODE_KEY][dimension][level_id] = not en_calculo
     if _ERROR_KEY not in st.session_state:
         st.session_state[_ERROR_KEY] = {dimension: {} for dimension in STEP_TABS}
     if _BANNER_KEY not in st.session_state:
@@ -720,6 +733,11 @@ def _set_level_state(
         state["estado_auto"] = estado_auto
     if en_calculo is not None:
         state["en_calculo"] = en_calculo
+        if _EDIT_MODE_KEY not in st.session_state:
+            st.session_state[_EDIT_MODE_KEY] = {}
+        if dimension not in st.session_state[_EDIT_MODE_KEY]:
+            st.session_state[_EDIT_MODE_KEY][dimension] = {}
+        st.session_state[_EDIT_MODE_KEY][dimension][level_id] = not en_calculo
     if state.get("marcado_revision"):
         state["estado"] = "Revisión requerida"
     else:
@@ -741,6 +759,36 @@ def _toggle_revision(dimension: str, level_id: int) -> None:
     state = _level_state(dimension, level_id)
     nuevo_valor = not state.get("marcado_revision", False)
     _set_revision_flag(dimension, level_id, nuevo_valor)
+
+
+def _restore_level_form_values(dimension: str, level_id: int) -> None:
+    niveles = LEVEL_DEFINITIONS.get(dimension, [])
+    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
+    if not level_data:
+        return
+    state = _level_state(dimension, level_id)
+    preguntas = level_data.get("preguntas") or []
+    if preguntas:
+        evidencias_estado = state.get("evidencias_preguntas") or {}
+        aggregated: list[str] = []
+        for idx, _ in enumerate(preguntas, start=1):
+            clave = str(idx)
+            pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
+            evidencia_key = f"evid_{dimension}_{level_id}_{idx}"
+            valor = state.get("respuestas_preguntas", {}).get(clave)
+            st.session_state[pregunta_key] = valor if valor in {"VERDADERO", "FALSO"} else "FALSO"
+            evidencia_val = evidencias_estado.get(clave, "") or ""
+            st.session_state[evidencia_key] = evidencia_val
+            if evidencia_val:
+                aggregated.append(str(evidencia_val).strip())
+        evidencia_join_key = f"evid_{dimension}_{level_id}"
+        st.session_state[evidencia_join_key] = " \n".join(aggregated)
+    else:
+        answer_key = f"resp_{dimension}_{level_id}"
+        evidencia_key = f"evid_{dimension}_{level_id}"
+        valor = state.get("respuesta")
+        st.session_state[answer_key] = valor if valor in {"VERDADERO", "FALSO"} else "FALSO"
+        st.session_state[evidencia_key] = state.get("evidencia", "") or ""
 
 
 def _sync_dimension_score(dimension: str) -> int:
@@ -909,6 +957,15 @@ def _render_dimension_tab(dimension: str) -> None:
             card_classes.append("level-card--answered")
         if st.session_state[_ERROR_KEY][dimension].get(level_id):
             card_classes.append("level-card--error")
+        edit_mode = st.session_state[_EDIT_MODE_KEY][dimension].get(
+            level_id,
+            not state.get("en_calculo"),
+        )
+        locked = bool(state.get("en_calculo")) and not edit_mode
+        if locked:
+            card_classes.append("level-card--locked")
+        elif edit_mode:
+            card_classes.append("level-card--editing")
 
         st.markdown(
             f"<div class='{' '.join(card_classes)}' id='{dimension}-{level_id}'>",
@@ -963,6 +1020,12 @@ def _render_dimension_tab(dimension: str) -> None:
                     unsafe_allow_html=True,
                 )
 
+                if locked:
+                    st.markdown(
+                        "<div class='level-card__lock-hint'>🔒 Nivel guardado. Pulsa <strong>Editar</strong> para modificar las respuestas.</div>",
+                        unsafe_allow_html=True,
+                    )
+
                 if preguntas:
                     st.markdown("**Evalúa cada pregunta:**")
                     for idx, pregunta in enumerate(preguntas, start=1):
@@ -979,6 +1042,8 @@ def _render_dimension_tab(dimension: str) -> None:
                             bloque_clases.append("question-block--complete")
                         else:
                             bloque_clases.append("question-block--pending")
+                        if locked:
+                            bloque_clases.append("question-block--locked")
 
                         st.markdown(
                             f"<div class='{' '.join(bloque_clases)}'>",
@@ -1013,6 +1078,7 @@ def _render_dimension_tab(dimension: str) -> None:
                                 key=pregunta_key,
                                 horizontal=True,
                                 label_visibility="collapsed",
+                                disabled=locked,
                             )
 
                         evidencia_texto = ""
@@ -1048,6 +1114,7 @@ def _render_dimension_tab(dimension: str) -> None:
                         options=["VERDADERO", "FALSO"],
                         key=answer_key,
                         horizontal=True,
+                        disabled=locked,
                     )
 
                 evidencia_texto = ""
@@ -1122,36 +1189,26 @@ def _render_dimension_tab(dimension: str) -> None:
                 guardar = col_guardar.form_submit_button(
                     "Guardar",
                     type="primary",
-                    disabled=not ready_to_save,
+                    disabled=locked or not ready_to_save,
                 )
-                editar = col_editar.form_submit_button("Editar")
+                show_cancel = bool(state.get("en_calculo")) and edit_mode and not locked
+                editar_label = "Cancelar" if show_cancel else "Editar"
+                editar_disabled = False
+                if not state.get("en_calculo") and edit_mode:
+                    editar_disabled = True
+                editar = col_editar.form_submit_button(editar_label, disabled=editar_disabled)
 
             if editar:
-                normalizado_edicion = _normalize_question_responses(level, respuestas_dict)
-                if preguntas:
-                    respuesta_edicion = _aggregate_question_status(normalizado_edicion)
-                else:
-                    respuesta_edicion = respuesta_manual if respuesta_manual in {"VERDADERO", "FALSO"} else None
-
-                en_calculo = respuesta_edicion == "VERDADERO"
-                estado_auto = "Respondido (en cálculo)" if en_calculo else "Pendiente"
-
-                _set_level_state(
-                    dimension,
-                    level_id,
-                    respuesta=respuesta_edicion,
-                    respuestas_preguntas=normalizado_edicion,
-                    evidencia=evidencia_texto,
-                    evidencias_preguntas=evidencias_dict_envio,
-                    estado_auto=estado_auto,
-                    en_calculo=en_calculo,
-                )
-                _set_revision_flag(dimension, level_id, False)
-                st.session_state[_BANNER_KEY][dimension] = None
-                st.session_state[_ERROR_KEY][dimension][level_id] = None
-                _sync_dimension_score(dimension)
-                st.toast("Actualizado")
-                _rerun_app()
+                if locked:
+                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = True
+                    st.toast("Modo edición activado")
+                    _rerun_app()
+                elif state.get("en_calculo"):
+                    _restore_level_form_values(dimension, level_id)
+                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = False
+                    _update_ready_flag(dimension, level_id)
+                    st.toast("Cambios descartados")
+                    _rerun_app()
 
             if guardar:
                 success, error_message, banner = _handle_level_submission(
@@ -1168,6 +1225,8 @@ def _render_dimension_tab(dimension: str) -> None:
                 else:
                     st.session_state[_ERROR_KEY][dimension][level_id] = None
                     _sync_dimension_score(dimension)
+                    _set_revision_flag(dimension, level_id, False)
+                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = False
                     st.session_state[_CLOSE_EXPANDER_KEY] = (dimension, level_id)
                     st.toast("Guardado")
                     _rerun_app()
@@ -1621,6 +1680,34 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     pointer-events: none;
 }
 
+.level-card--editing {
+    border-color: rgba(21, 118, 78, 0.88);
+    box-shadow: 0 26px 48px rgba(27, 122, 84, 0.24);
+}
+
+.level-card--editing > div[data-testid="stExpander"] > details > summary {
+    color: #0d4c32;
+}
+
+.level-card--locked {
+    background: linear-gradient(135deg, rgba(228, 232, 238, 0.94), rgba(212, 217, 226, 0.98));
+    border-color: rgba(135, 145, 163, 0.68);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 14px 30px rgba(64, 74, 92, 0.14);
+}
+
+.level-card--locked.level-card--answered::before {
+    display: none;
+}
+
+.level-card--locked > div[data-testid="stExpander"] > details > summary {
+    color: rgba(46, 59, 79, 0.88);
+    text-shadow: none;
+}
+
+.level-card--locked .level-card__intro {
+    color: rgba(48, 61, 80, 0.8);
+}
+
 .level-card--complete {
     border-color: rgba(34, 141, 96, 0.7);
 }
@@ -1678,6 +1765,18 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 
 .question-block--pending {
     border-color: rgba(var(--shadow-color), 0.16);
+}
+
+.question-block--locked {
+    border-color: rgba(140, 150, 168, 0.5);
+    background: rgba(244, 246, 250, 0.82);
+    box-shadow: none;
+    opacity: 0.78;
+}
+
+.question-block--locked .question-block__chip {
+    filter: grayscale(0.4);
+    opacity: 0.85;
 }
 
 .question-block__header {
@@ -1746,6 +1845,35 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 .question-block__counter--alert {
     color: rgba(184, 92, 64, 0.88);
     font-weight: 600;
+}
+
+.level-card--locked .question-block__counter,
+.level-card--locked .stepper-form__counter {
+    opacity: 0.65;
+}
+
+.level-card--locked .stTextArea textarea,
+.level-card--locked .stTextInput input,
+.level-card--locked div[data-testid="stRadio"] {
+    filter: grayscale(0.65);
+    opacity: 0.8;
+}
+
+.level-card__lock-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    font-size: 0.86rem;
+    color: rgba(42, 55, 78, 0.88);
+    background: rgba(64, 84, 114, 0.12);
+    border: 1px dashed rgba(64, 84, 114, 0.35);
+    border-radius: 14px;
+    padding: 0.7rem 0.85rem;
+    margin-bottom: 1.05rem;
+}
+
+.level-card__lock-hint strong {
+    color: rgba(32, 45, 68, 0.92);
 }
 
 .question-block__hint {
