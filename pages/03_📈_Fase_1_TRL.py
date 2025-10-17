@@ -18,6 +18,156 @@ IRL_DIMENSIONS = [
     ("FRL", 5),
 ]
 
+CRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Hipótesis especulativa sobre una posible necesidad en el mercado.",
+        "preguntas": [
+            "¿Tiene alguna hipótesis sobre un problema o necesidad que podría existir en el mercado?",
+            "¿Ha identificado quiénes podrían ser sus posibles clientes, aunque sea de manera especulativa?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Familiarización inicial con el mercado y necesidades más específicas detectadas.",
+        "preguntas": [
+            "¿Ha realizado alguna investigación secundaria o revisión de mercado para entender problemas del cliente?",
+            "¿Tiene una descripción más clara y específica de las necesidades o problemas detectados?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Primer feedback de mercado y validación preliminar de necesidades.",
+        "preguntas": [
+            "¿Ha iniciado contactos directos con posibles usuarios o expertos del mercado para obtener retroalimentación?",
+            "¿Ha comenzado a desarrollar una hipótesis más clara sobre los segmentos de clientes y sus problemas?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Confirmación del problema con varios usuarios y segmentación inicial.",
+        "preguntas": [
+            "¿Ha confirmado el problema o necesidad con varios clientes o usuarios reales?",
+            "¿Ha definido una hipótesis de producto basada en el feedback recibido de los usuarios?",
+            "¿Tiene segmentación inicial de clientes en función del problema identificado?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Interés establecido por parte de usuarios y comprensión más profunda del mercado.",
+        "preguntas": [
+            "¿Cuenta con evidencia de interés concreto por parte de clientes o usuarios hacia su solución?",
+            "¿Ha establecido relaciones con potenciales clientes o aliados que retroalimentan su propuesta de valor?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Beneficios de la solución confirmados a través de pruebas o asociaciones iniciales.",
+        "preguntas": [
+            "¿Ha realizado pruebas del producto o solución con clientes que validen sus beneficios?",
+            "¿Ha iniciado procesos de venta o pilotos con clientes reales o aliados estratégicos?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "Clientes involucrados en pruebas extendidas o primeras ventas/test comerciales.",
+        "preguntas": [
+            "¿Tiene acuerdos o primeras ventas del producto (aunque sea versión de prueba)?",
+            "¿Los clientes han participado activamente en validaciones o pruebas extendidas del producto?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Ventas iniciales y preparación para ventas estructuradas y escalables.",
+        "preguntas": [
+            "¿Ha vendido sus primeros productos y validado la disposición de pago de un porcentaje relevante de clientes?",
+            "¿Cuenta con una organización comercial mínima (CRM, procesos de venta, canales definidos)?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "Adopción consolidada y ventas repetibles a múltiples clientes reales.",
+        "preguntas": [
+            "¿Está realizando ventas escalables y repetibles con múltiples clientes?",
+            "¿Su empresa está enfocada en ejecutar un proceso de crecimiento comercial con foco en la demanda de clientes?",
+        ],
+    },
+]
+
+def _init_irl_state():
+    if "irl_scores" not in st.session_state:
+        st.session_state["irl_scores"] = {dimension: default for dimension, default in IRL_DIMENSIONS}
+    if "irl_answers" not in st.session_state:
+        st.session_state["irl_answers"] = {}
+
+
+def _compute_consecutive_level(dimension: str, levels: list[dict]) -> int:
+    reached_level = 0
+    for level_data in levels:
+        preguntas = level_data.get("preguntas", [])
+        nivel_validado = True
+        for idx, _ in enumerate(preguntas, start=1):
+            answer_key = f"irl_{dimension}_L{level_data['nivel']}_Q{idx}"
+            if st.session_state.get(answer_key, "FALSO") != "VERDADERO":
+                nivel_validado = False
+                break
+        if nivel_validado:
+            reached_level = level_data["nivel"]
+        else:
+            break
+    return reached_level
+
+
+def _render_crl_tab():
+    _init_irl_state()
+    st.markdown("#### Calculadora de madurez del cliente (CRL)")
+    st.caption(
+        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
+    )
+    for level in CRL_LEVELS:
+        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
+        preguntas = level["preguntas"]
+        for idx, pregunta in enumerate(preguntas, start=1):
+            answer_key = f"irl_CRL_L{level['nivel']}_Q{idx}"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = "FALSO"
+            respuesta = st.radio(
+                pregunta,
+                options=["FALSO", "VERDADERO"],
+                horizontal=True,
+                key=answer_key,
+            )
+            if respuesta == "VERDADERO":
+                evidence_key = f"{answer_key}_evidencia"
+                st.text_input(
+                    "Acredite el medio de verificación con que cuenta",
+                    key=evidence_key,
+                )
+        st.divider()
+
+    nivel_consecutivo = _compute_consecutive_level("CRL", CRL_LEVELS)
+    st.session_state["irl_scores"]["CRL"] = nivel_consecutivo
+    if nivel_consecutivo:
+        st.success(f"Nivel alcanzado: CRL {nivel_consecutivo}")
+    else:
+        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel CRL.")
+
+
+def _render_placeholder_tab(dimension: str):
+    _init_irl_state()
+    score_key = f"irl_manual_{dimension}"
+    default_value = int(st.session_state["irl_scores"].get(dimension, 0))
+    st.info("Define temporalmente el nivel de madurez mientras se agregan las preguntas específicas.")
+    nivel = st.slider(
+        f"Selecciona el nivel de {dimension}",
+        min_value=0,
+        max_value=9,
+        value=default_value,
+        key=score_key,
+    )
+    st.session_state["irl_scores"][dimension] = nivel
+
+
 st.set_page_config(page_title="Fase 1 - Evaluacion TRL", page_icon="🌲", layout="wide")
 load_theme()
 
@@ -359,12 +509,42 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 with st.container():
+    st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
+    st.markdown("### Evaluación IRL")
+    st.caption(
+        "Responde las preguntas de cada pestaña y acredita la evidencia para calcular automáticamente el nivel de madurez por dimensión."
+    )
+    _init_irl_state()
+    tabs = st.tabs([dimension for dimension, _ in IRL_DIMENSIONS])
+    for idx, (dimension, _) in enumerate(IRL_DIMENSIONS):
+        with tabs[idx]:
+            if dimension == "CRL":
+                _render_crl_tab()
+            else:
+                _render_placeholder_tab(dimension)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with st.container():
     st.markdown("<div class='section-shell section-shell--split'>", unsafe_allow_html=True)
     st.markdown("#### Radar IRL interactivo")
     radar_col_left, radar_col_right = st.columns([1.1, 1])
     with radar_col_left:
-        st.caption("Ajusta los niveles (0-9) para visualizar el perfil IRL estimado antes de registrar evidencias.")
-        radar_values = {label: st.slider(label, 0, 9, default) for label, default in IRL_DIMENSIONS}
+        st.caption("Los niveles mostrados se ajustan automáticamente según la evaluación registrada en las pestañas superiores.")
+        _init_irl_state()
+        radar_values = {}
+        for dimension, _ in IRL_DIMENSIONS:
+            valor = st.session_state["irl_scores"].get(dimension, 0)
+            radar_values[dimension] = valor
+        resumen_df = (
+            pd.DataFrame(
+                [
+                    {"Dimensión": dimension, "Nivel": radar_values.get(dimension, 0)}
+                    for dimension, _ in IRL_DIMENSIONS
+                ]
+            )
+            .set_index("Dimensión")
+        )
+        st.dataframe(resumen_df, use_container_width=True)
 
     with radar_col_right:
         labels = list(radar_values.keys())
