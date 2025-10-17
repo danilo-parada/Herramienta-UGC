@@ -71,6 +71,7 @@ import streamlit as st
 
 
 from core import db, utils
+from core.theme import load_theme
 
 
 
@@ -172,7 +173,9 @@ except ModuleNotFoundError:
 
 
 
-st.set_page_config(page_title="Fase 0 - Portafolio", page_icon="???", layout="wide")
+st.set_page_config(page_title="Fase 0 - Portafolio", page_icon="🌲", layout="wide")
+
+load_theme()
 
 
 
@@ -189,190 +192,158 @@ st.set_page_config(page_title="Fase 0 - Portafolio", page_icon="???", layout="wi
 
 
 CSS = """
-
-
-
-
-
-
-
 <style>
-
-
-
-
-
-
-
-body { background-color: #F5F7FA; color:#0F3D44; }
-
-
-
-
-
-
-
-h1, h2, h3 { font-weight:700; letter-spacing:0.2px; }
-
-
-
-
-
-
-
-.section-card { background:#ffffff; border-radius:16px; border:1px solid #D9E1E7; padding:1.3rem 1.6rem; box-shadow:0 8px 20px rgba(15,61,68,0.08); margin-bottom:1.5rem; }
-
-
-
-
-
-
-
-.badge { display:inline-block; padding:4px 14px; border-radius:999px; background:#E5F4F5; color:#14747D; font-weight:600; font-size:0.8rem; border:1px solid #C2E3E5; }
-
-
-
-
-
-
-
-.primary-btn button { background:linear-gradient(135deg,#198F9C,#157581); border:none; color:white; font-weight:600; border-radius:10px; padding:0.5rem 1.2rem; }
-
-
-
-
-
-
-
-.data-editor .stDataFrame { border-radius:12px; }
-
-
-
-
-
-
-
-.metric-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px,1fr)); gap:1.2rem; margin:1rem 0 1.6rem; }
-
-
-
-
-
-
-
-.metric-card { background:linear-gradient(160deg,#ffffff 0%,#f1fafb 100%); border:1px solid #C7E3E7; border-radius:18px; padding:1.1rem 1.4rem; text-align:left; box-shadow:0 14px 28px rgba(15,61,68,0.12); position:relative; overflow:hidden; transition:transform 0.22s ease, box-shadow 0.22s ease; }
-
-
-
-
-
-
-
-.metric-card::after { content:""; position:absolute; top:-40px; right:-40px; width:120px; height:120px; background:rgba(20,116,125,0.14); border-radius:50%; }
-
-
-
-
-
-
-
-.metric-card:hover { transform:translateY(-4px); box-shadow:0 18px 34px rgba(15,61,68,0.18); }
-
-
-
-
-
-
-
-.metric-value { font-size:2.3rem; font-weight:700; color:#115e65; margin-top:0.3rem; }
-
-
-
-
-
-
-
-.metric-label { font-size:0.85rem; font-weight:600; letter-spacing:0.6px; color:#3f5b64; text-transform:uppercase; }
-
-
-
-
-
-
-
-.score-table { width:100%; border-collapse:separate; border-spacing:0; margin-top:0.6rem; }
-
-
-
-
-
-
-
-.score-table th, .score-table td { padding:0.45rem 0.6rem; border-bottom:1px solid #E5ECF2; font-size:0.88rem; text-align:left; }
-
-
-
-
-
-
-
-.score-table th { background:#F0F5F7; font-weight:600; color:#0F3D44; }
-
-
-
-
-
-
-
-.recommendation-chip { display:inline-block; padding:4px 12px; border-radius:999px; background:#14747D; color:white; font-size:0.78rem; }
-
-
-
-
-
-
-
-.upload-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:1rem; margin:1.2rem 0; }
-
-
-
-
-
-
-
-.upload-card { background:#ffffff; border:1px dashed #A6CCD1; border-radius:16px; padding:1rem 1.2rem; box-shadow:0 6px 14px rgba(15,61,68,0.06); }
-
-
-
-
-
-
-
-.upload-card h4 { margin:0 0 0.5rem 0; font-size:1rem; color:#0F3D44; }
-
-
-
-
-
-
-
-.upload-card p { margin:0; font-size:0.85rem; color:#4C6271; }
-
-
-
-
-
-
-
+body { background: linear-gradient(180deg, var(--linen-100) 0%, #f1eadf 60%, #e9e0d2 100%); color: var(--text-900); }
+h1, h2, h3 { font-weight: 700; letter-spacing: 0.25px; }
+
+.section-card {
+    background: #ffffff;
+    border-radius: 22px;
+    border: 1px solid rgba(var(--shadow-color), 0.12);
+    padding: 1.6rem 1.9rem;
+    box-shadow: 0 24px 46px rgba(var(--shadow-color), 0.16);
+    margin-bottom: 1.8rem;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 6px 16px;
+    border-radius: 999px;
+    background: rgba(var(--forest-500), 0.12);
+    color: var(--forest-700);
+    font-weight: 600;
+    font-size: 0.85rem;
+    border: 1px solid rgba(var(--forest-500), 0.25);
+}
+
+.primary-btn button {
+    background: linear-gradient(140deg, var(--wood-600), var(--forest-700));
+    border: 1px solid rgba(var(--shadow-color), 0.35);
+    color: #fefcf8;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 0.55rem 1.4rem;
+    box-shadow: 0 18px 28px rgba(var(--shadow-color), 0.22);
+}
+
+.data-editor .stDataFrame {
+    border-radius: 18px;
+    border: 1px solid rgba(var(--shadow-color), 0.08);
+    box-shadow: 0 16px 34px rgba(var(--shadow-color), 0.16);
+}
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.3rem;
+    margin: 1.2rem 0 1.9rem;
+}
+
+.metric-card {
+    background: linear-gradient(160deg, rgba(37, 87, 52, 0.12), rgba(77, 51, 32, 0.15));
+    border: 1px solid rgba(var(--shadow-color), 0.15);
+    border-radius: 22px;
+    padding: 1.4rem 1.5rem;
+    text-align: left;
+    box-shadow: 0 24px 44px rgba(var(--shadow-color), 0.18);
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+
+.metric-card::after {
+    content: "";
+    position: absolute;
+    top: -50px;
+    right: -50px;
+    width: 140px;
+    height: 140px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 50%;
+}
+
+.metric-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 32px 58px rgba(var(--shadow-color), 0.22);
+}
+
+.metric-value {
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: var(--forest-700);
+    margin-top: 0.3rem;
+}
+
+.metric-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--text-500);
+    text-transform: uppercase;
+}
+
+.score-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-top: 0.6rem;
+}
+
+.score-table th,
+.score-table td {
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid rgba(var(--shadow-color), 0.1);
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+.score-table th {
+    background: rgba(var(--forest-500), 0.18);
+    font-weight: 600;
+    color: var(--text-700);
+}
+
+.recommendation-chip {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--forest-500), var(--forest-700));
+    color: #fefdf8;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.upload-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.1rem;
+    margin: 1.2rem 0;
+}
+
+.upload-card {
+    background: #ffffff;
+    border: 1px dashed rgba(var(--shadow-color), 0.22);
+    border-radius: 18px;
+    padding: 1.1rem 1.3rem;
+    box-shadow: 0 16px 28px rgba(var(--shadow-color), 0.12);
+}
+
+.upload-card h4 {
+    margin: 0 0 0.55rem 0;
+    font-size: 1.02rem;
+    color: var(--text-900);
+}
+
+.upload-card p {
+    margin: 0;
+    font-size: 0.86rem;
+    color: var(--text-500);
+}
 </style>
-
-
-
-
-
-
-
 """
+
 
 
 
