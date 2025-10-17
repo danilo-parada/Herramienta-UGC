@@ -1090,7 +1090,6 @@ def _render_dimension_tab(dimension: str) -> None:
                                 placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
                                 height=100,
                                 max_chars=STEP_CONFIG["max_char_limit"],
-                                disabled=locked,
                             )
                             contador = len(_clean_text(evidencia_texto))
                             contador_html = (
@@ -1138,7 +1137,6 @@ def _render_dimension_tab(dimension: str) -> None:
                             placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
                             height=110,
                             max_chars=STEP_CONFIG["max_char_limit"],
-                            disabled=locked,
                         )
 
                         contador = len(_clean_text(evidencia_texto))
@@ -2271,11 +2269,9 @@ with st.container():
             .set_index("Dimensión")
         )
         with st.expander('Resumen numerico IRL', expanded=False):
-            render_table(
+            st.dataframe(
                 resumen_df,
-                key='fase1_resumen_irl',
-                include_actions=False,
-                hide_index=False,
+                use_container_width=True,
             )
 
     with radar_col_right:
