@@ -1,0 +1,199 @@
+:root {
+  --forest-950: #0c2014;
+  --forest-900: #12301d;
+  --forest-800: #1d4329;
+  --forest-700: #255734;
+  --forest-500: #3f8144;
+  --forest-300: #78a55f;
+  --forest-150: #c7d9b6;
+  --wood-800: #4d3320;
+  --wood-600: #6f4b2c;
+  --wood-400: #8c6236;
+  --amber-200: #f4e7cc;
+  --linen-100: #f8f4ed;
+  --linen-50: #fcfaf6;
+  --text-900: #19261d;
+  --text-700: #304b36;
+  --text-500: #546b58;
+  --muted-400: #a7b5a6;
+  --shadow-color: 26, 54, 38;
+}
+
+* {
+  font-family: "Inter", "Segoe UI", sans-serif;
+}
+
+body {
+  background: linear-gradient(180deg, var(--linen-50) 0%, var(--linen-100) 40%, #f2ede3 100%);
+  color: var(--text-900);
+}
+
+section[data-testid="stSidebar"] > div {
+  background: var(--forest-900);
+  color: #f7f4ef;
+}
+
+section[data-testid="stSidebar"] .stButton > button,
+section[data-testid="stSidebar"] .stDownloadButton > button {
+  background: linear-gradient(135deg, var(--forest-500), var(--forest-700));
+  border: 1px solid rgba(var(--shadow-color), 0.35);
+  color: #f7f4ef;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-900);
+  letter-spacing: 0.4px;
+}
+
+.stMarkdown p {
+  color: var(--text-700);
+}
+
+.stButton > button,
+.stDownloadButton > button {
+  border-radius: 999px;
+  padding: 0.55rem 1.6rem;
+  font-weight: 600;
+  background: linear-gradient(120deg, var(--forest-500), var(--forest-700));
+  border: 1px solid rgba(var(--shadow-color), 0.35);
+  color: #fefcf8;
+  box-shadow: 0 12px 24px rgba(var(--shadow-color), 0.15);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 32px rgba(var(--shadow-color), 0.25);
+}
+
+.stTabs [data-baseweb="tab"] {
+  background: rgba(var(--shadow-color), 0.05);
+  border-radius: 999px;
+  margin-right: 0.5rem;
+  padding: 0.4rem 1.2rem;
+  font-weight: 600;
+  color: var(--text-500);
+}
+
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+  background: linear-gradient(135deg, var(--forest-500), var(--forest-700));
+  color: #fefcf8;
+}
+
+[data-testid="stMetricDelta"] {
+  font-weight: 600;
+}
+
+.css-1g5og7y,
+.stDataFrame,
+[data-testid="stDataFrameResizable"] {
+  border-radius: 18px;
+  border: 1px solid rgba(var(--shadow-color), 0.08);
+  box-shadow: 0 16px 36px rgba(var(--shadow-color), 0.12);
+  background: #ffffff;
+}
+
+[data-testid="stDataFrameResizable"] table,
+.stDataFrame table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.stAlert {
+  border-radius: 16px;
+  border: 1px solid rgba(var(--shadow-color), 0.08);
+  background: linear-gradient(140deg, #ffffff 0%, var(--linen-100) 100%);
+  color: var(--text-700);
+}
+
+hr {
+  border: none;
+  height: 1px;
+  background: rgba(var(--shadow-color), 0.12);
+  margin: 2.4rem 0 2rem;
+}
+
+.badge-soft {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(var(--forest-500), 0.12);
+  color: var(--forest-700);
+  border-radius: 999px;
+  padding: 0.35rem 1rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border: 1px solid rgba(var(--forest-500), 0.22);
+}
+
+.card-elevated {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 1.5rem;
+  border: 1px solid rgba(var(--shadow-color), 0.08);
+  box-shadow: 0 20px 40px rgba(var(--shadow-color), 0.12);
+}
+
+.card-wood {
+  background: linear-gradient(145deg, var(--wood-800), var(--wood-400));
+  color: #fefaf4;
+  border-radius: 20px;
+  padding: 1.5rem;
+  box-shadow: 0 30px 50px rgba(39, 24, 12, 0.35);
+}
+
+.card-forest {
+  background: linear-gradient(145deg, var(--forest-900), var(--forest-500));
+  color: #f6fff3;
+  border-radius: 20px;
+  padding: 1.5rem;
+  box-shadow: 0 28px 46px rgba(var(--shadow-color), 0.32);
+}
+
+.tag-pill {
+  display: inline-block;
+  background: rgba(var(--shadow-color), 0.08);
+  color: var(--text-500);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.table-soft-header thead tr th {
+  background: rgba(var(--forest-500), 0.12) !important;
+  color: var(--text-700) !important;
+}
+
+.table-soft-header tbody tr:nth-child(odd) td {
+  background: rgba(var(--forest-150), 0.45) !important;
+}
+
+.metric-highlight {
+  background: linear-gradient(135deg, rgba(var(--forest-500), 0.28), rgba(var(--forest-700), 0.32));
+  color: #fefdf9;
+  border-radius: 18px;
+  padding: 1.2rem 1.6rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+table th {
+  color: var(--text-700);
+}
+
+table td {
+  color: var(--text-500);
+}
+
+.st-expander > details {
+  border-radius: 16px;
+  border: 1px solid rgba(var(--shadow-color), 0.12);
+  background: #ffffff;
+  box-shadow: 0 12px 26px rgba(var(--shadow-color), 0.08);
+}
+
+.st-expander > details > summary {
+  font-weight: 600;
+  color: var(--forest-700);
+}
