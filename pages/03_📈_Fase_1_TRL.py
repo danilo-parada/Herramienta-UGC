@@ -1005,34 +1005,6 @@ def _render_dimension_tab(dimension: str) -> None:
                         _go_to_level(dimension, target)
                     _rerun_app()
 
-    st.divider()
-    st.markdown("#### Subsanar evidencias")
-    fuera_calculo = [
-        level
-        for level in levels
-        if _level_state(dimension, level["nivel"]).get("estado_auto") == "Fuera de cálculo"
-    ]
-    if fuera_calculo:
-        for level in fuera_calculo:
-            level_id = level["nivel"]
-            cols = st.columns([4, 1])
-            with cols[0]:
-                st.markdown(
-                    f"**Nivel {level_id}** · {level['descripcion']}"
-                )
-            with cols[1]:
-                if st.button(
-                    "Completar evidencia",
-                    key=f"btn_fix_{dimension}_{level_id}",
-                    use_container_width=True,
-                ):
-                    _go_to_level(dimension, level_id)
-                    st.session_state[_ERROR_KEY][dimension][level_id] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
-                    st.session_state[_BANNER_KEY][dimension] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
-                    _rerun_app()
-    else:
-        st.caption("No hay niveles fuera de cálculo en esta pestaña.")
-
 def _go_to_level(dimension: str, level_id: int) -> None:
     st.session_state[_OPEN_KEY][dimension] = str(level_id)
 
