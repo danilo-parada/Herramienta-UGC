@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from pathlib import Path
+from html import escape
 
 from core import db, utils, trl
 from core.db_trl import save_trl_result, get_trl_history
@@ -548,6 +549,41 @@ def _compute_consecutive_level(dimension: str, levels: list[dict]) -> int:
     return reached_level
 
 
+def _collect_dimension_responses() -> pd.DataFrame:
+    _init_irl_state()
+    dimensiones_ids = trl.ids_dimensiones()
+    etiquetas = dict(zip(dimensiones_ids, trl.labels_dimensiones()))
+    registros: list[dict] = []
+
+    for dimension in dimensiones_ids:
+        nivel_base = st.session_state["irl_scores"].get(dimension, 0)
+        nivel = int(nivel_base) if isinstance(nivel_base, (int, float)) and nivel_base else None
+
+        evidencias: list[str] = []
+        prefijo = f"irl_{dimension}_"
+        for key, value in st.session_state.items():
+            if not key.startswith(prefijo) or not key.endswith("_evidencia"):
+                continue
+            respuesta_key = key[:-10]
+            if st.session_state.get(respuesta_key) != "VERDADERO":
+                continue
+            if isinstance(value, str):
+                texto = value.strip()
+                if texto:
+                    evidencias.append(texto)
+
+        registros.append(
+            {
+                "dimension": dimension,
+                "etiqueta": etiquetas.get(dimension, dimension),
+                "nivel": nivel,
+                "evidencia": " · ".join(evidencias),
+            }
+        )
+
+    return pd.DataFrame(registros)
+
+
 def _render_crl_tab():
     _init_irl_state()
     st.markdown("#### Calculadora de madurez del cliente (CRL)")
@@ -924,6 +960,94 @@ st.markdown(
     color: var(--forest-700);
 }
 
+.selection-card {
+    position: relative;
+    padding: 1.8rem 2rem;
+    border-radius: 26px;
+    background: linear-gradient(140deg, rgba(49, 106, 67, 0.16), rgba(32, 73, 46, 0.22));
+    border: 1px solid rgba(41, 96, 59, 0.45);
+    box-shadow: 0 26px 48px rgba(21, 56, 35, 0.28);
+    overflow: hidden;
+}
+
+.selection-card::after {
+    content: "";
+    position: absolute;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: rgba(103, 164, 123, 0.18);
+    top: -80px;
+    right: -70px;
+    filter: blur(0.5px);
+}
+
+.selection-card__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.45rem 1.1rem;
+    border-radius: 999px;
+    background: #1f6b36;
+    color: #f4fff2;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    box-shadow: 0 12px 24px rgba(31, 107, 54, 0.35);
+    position: relative;
+    z-index: 1;
+}
+
+.selection-card__title {
+    margin: 1.1rem 0 0.6rem;
+    font-size: 1.65rem;
+    color: #10371d;
+    position: relative;
+    z-index: 1;
+}
+
+.selection-card__subtitle {
+    margin: 0;
+    color: rgba(16, 55, 29, 0.78);
+    font-size: 1rem;
+    position: relative;
+    z-index: 1;
+}
+
+.selection-card__meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1.1rem;
+    margin-top: 1.5rem;
+    position: relative;
+    z-index: 1;
+}
+
+.selection-card__meta-item {
+    padding: 1rem 1.1rem;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(41, 96, 59, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.selection-card__meta-label {
+    display: block;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.6px;
+    color: rgba(16, 55, 29, 0.64);
+    margin-bottom: 0.35rem;
+}
+
+.selection-card__meta-value {
+    display: block;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #10371d;
+}
+
 .history-caption {
     color: var(--text-500);
     margin-bottom: 0.8rem;
@@ -1075,42 +1199,43 @@ with st.container():
 
 project_id = parse_project_id(seleccion)
 
+selected_project = df_port.loc[df_port["id_innovacion"] == project_id].iloc[0]
+impacto_txt = selected_project.get("impacto") or "No informado"
+estado_txt = selected_project.get("estatus") or "Sin estado"
+responsable_txt = selected_project.get("responsable_innovacion") or "Sin responsable asignado"
+transferencia_txt = selected_project.get("potencial_transferencia") or "Sin potencial declarado"
+evaluacion_val = selected_project.get("evaluacion_numerica")
+evaluacion_txt = f"{float(evaluacion_val):.1f}" if pd.notna(evaluacion_val) else "—"
+
+selection_meta = [
+    ("Impacto estratégico", impacto_txt),
+    ("Estado actual", estado_txt),
+    ("Responsable de innovación", responsable_txt),
+    ("Evaluación Fase 0", evaluacion_txt),
+]
+
+meta_items_html = "".join(
+    f"<div class='selection-card__meta-item'>"
+    f"<span class='selection-card__meta-label'>{escape(label)}</span>"
+    f"<span class='selection-card__meta-value'>{escape(str(value))}</span>"
+    "</div>"
+    for label, value in selection_meta
+)
+
+selection_card_html = f"""
+<div class='selection-card'>
+    <span class='selection-card__badge'>Proyecto seleccionado</span>
+    <h3 class='selection-card__title'>{escape(selected_project['nombre_innovacion'])}</h3>
+    <p class='selection-card__subtitle'>{escape(str(transferencia_txt))}</p>
+    <div class='selection-card__meta'>
+        {meta_items_html}
+    </div>
+</div>
+"""
+
 with st.container():
     st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
-    st.markdown("### Dimensiones y evidencias")
-    df_resp = trl.esquema_respuestas()
-
-    df_resp = st.data_editor(
-        df_resp,
-        num_rows="fixed",
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "dimension": st.column_config.TextColumn("Dimension", disabled=True),
-            "nivel": st.column_config.NumberColumn("Nivel (1-9)", min_value=1, max_value=9, step=1),
-            "evidencia": st.column_config.TextColumn("Evidencia / notas"),
-        },
-    )
-
-    puntaje = trl.calcular_trl(df_resp)
-    st.metric("TRL estimado", f"{puntaje:.1f}" if puntaje is not None else "-")
-
-    col_guardar, col_ayuda = st.columns([1, 1])
-    with col_guardar:
-        if st.button("Guardar evaluacion"):
-            if puntaje is None:
-                st.error("Define niveles validos (1-9) en al menos una dimension antes de guardar.")
-            else:
-                try:
-                    save_trl_result(project_id, df_resp, float(puntaje))
-                    st.success("Evaluacion guardada correctamente.")
-                except Exception as error:
-                    st.error(f"Error al guardar: {error}")
-
-    with col_ayuda:
-        st.info(
-            "El guardado crea un registro por dimension y asocia el TRL global a la misma fecha de evaluacion para el proyecto seleccionado."
-        )
+    st.markdown(selection_card_html, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with st.container():
@@ -1137,6 +1262,51 @@ with st.container():
                 _render_frl_tab()
             else:
                 _render_placeholder_tab(dimension)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with st.container():
+    st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
+    st.markdown("### Resultado TRL consolidado")
+    st.caption("Se calcula automáticamente a partir de los niveles consecutivos validados en cada dimensión IRL.")
+
+    df_respuestas = _collect_dimension_responses()
+    if not df_respuestas.empty:
+        resumen_vista = pd.DataFrame(
+            [
+                {
+                    "Dimensión": fila.get("etiqueta", fila.get("dimension")),
+                    "Nivel alcanzado": int(fila["nivel"]) if pd.notna(fila["nivel"]) else "—",
+                    "Evidencias acreditadas": fila.get("evidencia") or "—",
+                }
+                for _, fila in df_respuestas.iterrows()
+            ]
+        )
+
+        st.dataframe(
+            resumen_vista,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    puntaje = trl.calcular_trl(df_respuestas[["dimension", "nivel", "evidencia"]]) if not df_respuestas.empty else None
+    st.metric("TRL estimado", f"{puntaje:.1f}" if puntaje is not None else "-")
+
+    col_guardar, col_ayuda = st.columns([1, 1])
+    with col_guardar:
+        if st.button("Guardar evaluacion"):
+            if puntaje is None:
+                st.error("Define evidencias consecutivas en al menos una dimensión para calcular el TRL antes de guardar.")
+            else:
+                try:
+                    save_trl_result(project_id, df_respuestas[["dimension", "nivel", "evidencia"]], float(puntaje))
+                    st.success("Evaluacion guardada correctamente.")
+                except Exception as error:
+                    st.error(f"Error al guardar: {error}")
+
+    with col_ayuda:
+        st.info(
+            "El guardado crea un registro por dimensión con las evidencias acreditadas y asocia el TRL global a la misma fecha de evaluación."
+        )
     st.markdown("</div>", unsafe_allow_html=True)
 
 with st.container():
