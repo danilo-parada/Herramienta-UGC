@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from html import escape
 import re
+from typing import Any
 
 
 def _rerun_app() -> None:
@@ -1279,6 +1280,88 @@ def _collect_dimension_responses() -> pd.DataFrame:
 
 
 
+def _level_has_response(state: dict | None) -> bool:
+    if not state:
+        return False
+
+    estado_auto = state.get("estado_auto")
+    if estado_auto and estado_auto != "Pendiente":
+        return True
+
+    if state.get("en_calculo"):
+        return True
+
+    estado = state.get("estado")
+    if estado and estado != "Pendiente":
+        return True
+
+    if state.get("marcado_revision"):
+        return True
+
+    return False
+
+
+def _format_answer_display(valor: str | None, state: dict | None) -> str:
+    if valor == "VERDADERO":
+        return "Verdadero"
+
+    if valor == "FALSO":
+        return "Falso" if _level_has_response(state) else "No respondido"
+
+    return "No respondido"
+
+
+def _collect_dimension_details() -> dict[str, dict[str, Any]]:
+    _init_irl_state()
+    dimensiones_ids = trl.ids_dimensiones()
+    etiquetas = dict(zip(dimensiones_ids, trl.labels_dimensiones()))
+    detalles: dict[str, dict[str, Any]] = {}
+
+    for dimension in dimensiones_ids:
+        niveles = LEVEL_DEFINITIONS.get(dimension, [])
+        filas: list[dict[str, Any]] = []
+        for level in niveles:
+            nivel_id = level.get("nivel")
+            state = _level_state(dimension, nivel_id)
+            estado_nivel = state.get("estado", "Pendiente")
+            preguntas = level.get("preguntas") or []
+            if preguntas:
+                respuestas = state.get("respuestas_preguntas") or {}
+                evidencias_preguntas = state.get("evidencias_preguntas") or {}
+                for idx, pregunta in enumerate(preguntas, start=1):
+                    idx_str = str(idx)
+                    filas.append(
+                        {
+                            "Nivel": nivel_id,
+                            "Descripción del nivel": level.get("descripcion", ""),
+                            "Pregunta": pregunta,
+                            "Respuesta": _format_answer_display(
+                                respuestas.get(idx_str), state
+                            ),
+                            "Medio de verificación": evidencias_preguntas.get(idx_str) or "—",
+                            "Estado del nivel": estado_nivel,
+                        }
+                    )
+            else:
+                filas.append(
+                    {
+                        "Nivel": nivel_id,
+                        "Descripción del nivel": level.get("descripcion", ""),
+                        "Pregunta": "—",
+                        "Respuesta": _format_answer_display(state.get("respuesta"), state),
+                        "Medio de verificación": state.get("evidencia") or "—",
+                        "Estado del nivel": estado_nivel,
+                    }
+                )
+
+        detalles[dimension] = {
+            "label": etiquetas.get(dimension, dimension),
+            "rows": filas,
+        }
+
+    return detalles
+
+
 st.set_page_config(page_title="Fase 1 - Evaluacion TRL", page_icon="🌲", layout="wide")
 load_theme()
 
@@ -2206,25 +2289,53 @@ with st.container():
 with st.container():
     st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
     df_respuestas = _collect_dimension_responses()
-    if not df_respuestas.empty:
-        resumen_vista = pd.DataFrame(
-            [
-                {
-                    "Dimensión": fila.get("etiqueta", fila.get("dimension")),
-                    "Nivel alcanzado": int(fila["nivel"]) if pd.notna(fila["nivel"]) else "—",
-                    "Evidencias acreditadas": fila.get("evidencia") or "—",
-                }
-                for _, fila in df_respuestas.iterrows()
-            ]
-        )
+    detalles_dimensiones = _collect_dimension_details()
+    with st.expander('Detalle de niveles por dimension', expanded=False):
+        if not df_respuestas.empty:
+            resumen_vista = pd.DataFrame(
+                [
+                    {
+                        "Dimensión": fila.get("etiqueta", fila.get("dimension")),
+                        "Nivel alcanzado": int(fila["nivel"]) if pd.notna(fila["nivel"]) else "—",
+                        "Evidencias acreditadas": fila.get("evidencia") or "—",
+                    }
+                    for _, fila in df_respuestas.iterrows()
+                ]
+            )
 
-        with st.expander('Detalle de niveles por dimension', expanded=False):
+            st.markdown("**Resumen general por dimensión**")
             render_table(
                 resumen_vista,
                 key='fase1_detalle_dimensiones',
                 include_actions=False,
                 hide_index=True,
             )
+        else:
+            st.info("Aún no hay niveles respondidos en esta evaluación.")
+
+        if detalles_dimensiones:
+            tab_labels = [
+                f"{info['label']}" if info["label"] else dimension
+                for dimension, info in detalles_dimensiones.items()
+            ]
+            st.markdown("**Preguntas y respuestas por dimensión**")
+            tabs = st.tabs(tab_labels)
+            for idx, (dimension, info) in enumerate(detalles_dimensiones.items()):
+                with tabs[idx]:
+                    detalle_df = pd.DataFrame(info["rows"])
+                    if detalle_df.empty:
+                        st.info("No hay niveles configurados para esta dimensión.")
+                    else:
+                        render_table(
+                            detalle_df,
+                            key=f'fase1_detalle_dimensiones_{dimension}',
+                            include_actions=False,
+                            hide_index=True,
+                            page_size_options=(10, 25, 50),
+                            default_page_size=10,
+                        )
+        else:
+            st.warning("No se encontraron definiciones de niveles para las dimensiones IRL.")
     puntaje = trl.calcular_trl(df_respuestas[["dimension", "nivel", "evidencia"]]) if not df_respuestas.empty else None
     st.metric("Nivel TRL alcanzado", f"{puntaje:.1f}" if puntaje is not None else "-")
 
