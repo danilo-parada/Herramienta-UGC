@@ -1062,6 +1062,78 @@ st.markdown(
         justify-content: center;
     }
 }
+
+div[data-testid="stExpander"] {
+    margin-bottom: 1.4rem;
+}
+
+div[data-testid="stExpander"] > details {
+    border-radius: 22px;
+    border: 1px solid rgba(var(--shadow-color), 0.16);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.98), rgba(235, 229, 220, 0.9));
+    box-shadow: 0 24px 52px rgba(var(--shadow-color), 0.18);
+    overflow: hidden;
+}
+
+div[data-testid="stExpander"] > details > summary {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--forest-700);
+    padding: 1rem 1.4rem;
+    list-style: none;
+    position: relative;
+}
+
+div[data-testid="stExpander"] > details > summary::before {
+    content: "➕";
+    margin-right: 0.6rem;
+    color: var(--forest-600);
+    font-size: 1rem;
+}
+
+div[data-testid="stExpander"] > details[open] > summary::before {
+    content: "➖";
+}
+
+div[data-testid="stExpander"] > details[open] > summary {
+    background: rgba(var(--forest-500), 0.12);
+    color: var(--forest-800);
+}
+
+div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
+    padding: 1.2rem 1.5rem 1.4rem;
+    background: #ffffff;
+    border-top: 1px solid rgba(var(--shadow-color), 0.12);
+}
+
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"] {
+    border: 1px solid rgba(var(--shadow-color), 0.16);
+    border-radius: 22px;
+    overflow: hidden;
+    box-shadow: 0 22px 44px rgba(var(--shadow-color), 0.18);
+    background: #ffffff;
+}
+
+div[data-testid="stDataFrame"] div[role="columnheader"],
+div[data-testid="stDataEditor"] div[role="columnheader"] {
+    background: rgba(var(--forest-500), 0.16) !important;
+    color: var(--forest-900) !important;
+    font-weight: 700;
+    font-size: 0.92rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+div[data-testid="stDataFrame"] div[role="gridcell"],
+div[data-testid="stDataEditor"] div[role="gridcell"] {
+    color: var(--text-700);
+    font-size: 0.92rem;
+}
+
+div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
+    background: rgba(var(--linen-200), 0.5);
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -1151,9 +1223,9 @@ with st.container():
         ],
         axis=1,
     )
-    st.dataframe(styled_ranking, use_container_width=True, hide_index=True)
+    with st.expander('Ver ranking priorizado', expanded=False):
+        st.dataframe(styled_ranking, use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
-
 ranking_keys = ranking_df[['id_innovacion', 'ranking']].copy()
 ranking_keys['id_str'] = ranking_keys['id_innovacion'].astype(str)
 
@@ -1282,12 +1354,12 @@ with st.container():
             ]
         )
 
-        st.dataframe(
-            resumen_vista,
-            use_container_width=True,
-            hide_index=True,
-        )
-
+        with st.expander('Detalle de niveles por dimension', expanded=False):
+            st.dataframe(
+                resumen_vista,
+                use_container_width=True,
+                hide_index=True,
+            )
     puntaje = trl.calcular_trl(df_respuestas[["dimension", "nivel", "evidencia"]]) if not df_respuestas.empty else None
     st.metric("TRL estimado", f"{puntaje:.1f}" if puntaje is not None else "-")
 
@@ -1329,7 +1401,8 @@ with st.container():
             )
             .set_index("Dimensión")
         )
-        st.dataframe(resumen_df, use_container_width=True)
+        with st.expander('Resumen numerico IRL', expanded=False):
+            st.dataframe(resumen_df, use_container_width=True)
 
     with radar_col_right:
         labels = list(radar_values.keys())
@@ -1365,7 +1438,8 @@ with st.container():
     else:
         ultimo_registro = historial["fecha_eval"].iloc[0]
         st.caption(f"Ultima evaluacion registrada: {ultimo_registro}")
-        st.dataframe(historial, use_container_width=True, hide_index=True)
+        with st.expander('Historial de evaluaciones', expanded=False):
+            st.dataframe(historial, use_container_width=True, hide_index=True)
 
         datos_ultimo = historial[historial["fecha_eval"] == ultimo_registro].copy()
         pivot = datos_ultimo.groupby("dimension", as_index=False)["nivel"].mean()
