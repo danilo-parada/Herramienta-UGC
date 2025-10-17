@@ -1209,8 +1209,14 @@ def _render_dimension_tab(dimension: str) -> None:
                 col_guardar, col_revision = st.columns([2, 1])
                 guardar = col_guardar.form_submit_button(
                     "Guardar",
-                    disabled=not st.session_state[_READY_KEY][dimension].get(level_id, False),
                     type="primary",
+                    help=(
+                        "Se habilita el guardado aunque falten respuestas para permitir el envío"
+                        " de los cambios. El sistema validará que todas las preguntas tengan"
+                        " respuesta y evidencias cuando corresponda."
+                        if not st.session_state[_READY_KEY][dimension].get(level_id, False)
+                        else None
+                    ),
                 )
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
