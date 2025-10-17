@@ -555,14 +555,13 @@ STEP_CONFIG = {
 }
 
 _STATE_KEY = "irl_stepper_state"
-_OPEN_KEY = "irl_stepper_open_level"
 _ERROR_KEY = "irl_stepper_errors"
 _BANNER_KEY = "irl_stepper_banner"
 
 _STATUS_CLASS_MAP = {
     "Pendiente": "pending",
     "Respondido (en cálculo)": "complete",
-    "Fuera de cálculo": "out",
+    "Fuera de cálculo": "attention",
     "Revisión requerida": "review",
 }
 
@@ -581,7 +580,6 @@ def _init_irl_state() -> None:
                     "estado": "Pendiente",
                     "estado_auto": "Pendiente",
                     "en_calculo": False,
-                    "fuera_calculo": False,
                     "marcado_revision": False,
                 }
     for dimension in STEP_TABS:
@@ -607,11 +605,6 @@ def _init_irl_state() -> None:
                 normalizado_evidencias[clave] = str(valor) if valor is not None else ""
             state["evidencias_preguntas"] = normalizado_evidencias
             st.session_state[_STATE_KEY][dimension][level["nivel"]] = state
-    if _OPEN_KEY not in st.session_state:
-        st.session_state[_OPEN_KEY] = {
-            dimension: str(LEVEL_DEFINITIONS.get(dimension, [{"nivel": 1}])[0]["nivel"])
-            for dimension in STEP_TABS
-        }
     if _ERROR_KEY not in st.session_state:
         st.session_state[_ERROR_KEY] = {dimension: {} for dimension in STEP_TABS}
     if _BANNER_KEY not in st.session_state:
@@ -648,7 +641,6 @@ def _set_level_state(
         state["estado_auto"] = estado_auto
     if en_calculo is not None:
         state["en_calculo"] = en_calculo
-    state["fuera_calculo"] = state.get("estado_auto") == "Fuera de cálculo"
     if state.get("marcado_revision"):
         state["estado"] = "Revisión requerida"
     else:
@@ -686,13 +678,11 @@ def _compute_dimension_counts(dimension: str) -> dict:
     niveles = st.session_state[_STATE_KEY][dimension]
     total = len(niveles)
     completados = sum(1 for data in niveles.values() if data.get("en_calculo"))
-    fuera = sum(1 for data in niveles.values() if data.get("estado_auto") == "Fuera de cálculo")
-    pendientes = max(total - completados - fuera, 0)
     revision = sum(1 for data in niveles.values() if data.get("marcado_revision"))
+    pendientes = max(total - completados, 0)
     return {
         "total": total,
         "completed": completados,
-        "fuera": fuera,
         "pending": pendientes,
         "revision": revision,
     }
@@ -705,9 +695,9 @@ def _dimension_badge_class(status: str) -> str:
     }.get(status, "pending")
 
 def _dimension_badge(counts: dict) -> str:
-    if counts["completed"] == counts["total"] and counts["fuera"] == 0 and counts["revision"] == 0:
+    if counts["completed"] == counts["total"] and counts["revision"] == 0:
         return "Completa"
-    if counts["completed"] or counts["fuera"] or counts["revision"]:
+    if counts["completed"] or counts["revision"]:
         return "Parcial"
     return "Pendiente"
 
@@ -804,8 +794,8 @@ def _handle_level_submission(
                 mensaje = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
                 _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
                 return False, mensaje, mensaje
-            _set_level_state(dimension, level_id, estado_auto="Fuera de cálculo", en_calculo=False)
-            banner = "La respuesta se guardó como Fuera de cálculo hasta completar la evidencia."
+            _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
+            banner = "Agrega evidencia para activar este nivel en el cálculo."
             return True, None, banner
         _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
         return True, None, None
@@ -813,23 +803,6 @@ def _handle_level_submission(
     # respuesta == "FALSO"
     _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
     return True, None, None
-
-
-def _go_to_level(dimension: str, level_id: int) -> None:
-    st.session_state[_OPEN_KEY][dimension] = str(level_id)
-
-
-def _next_level_id(dimension: str, current_level: int, step: int) -> int:
-    niveles = [level["nivel"] for level in LEVEL_DEFINITIONS.get(dimension, [])]
-    if current_level not in niveles:
-        return niveles[0]
-    current_index = niveles.index(current_level)
-    target_index = current_index + step
-    if target_index < 0:
-        target_index = 0
-    if target_index >= len(niveles):
-        target_index = len(niveles) - 1
-    return niveles[target_index]
 
 
 def _render_dimension_tab(dimension: str) -> None:
@@ -840,77 +813,35 @@ def _render_dimension_tab(dimension: str) -> None:
     banner_msg = st.session_state[_BANNER_KEY].get(dimension)
     banner_slot = st.empty()
     if banner_msg:
-        if "Fuera de cálculo" in banner_msg:
-            banner_slot.warning(banner_msg)
-        else:
-            banner_slot.error(banner_msg)
+        banner_slot.info(banner_msg)
 
     progreso = counts["completed"] / counts["total"] if counts["total"] else 0
     st.markdown(
-        f"**{counts['completed']}/{counts['total']} completados · {counts['fuera']} fuera de cálculo · {counts['pending']} pendientes**"
+        f"**{counts['completed']} de {counts['total']} niveles respondidos**"
     )
     st.progress(progreso)
 
     for level in levels:
         level_id = level["nivel"]
         state = _level_state(dimension, level_id)
-        open_flag = st.session_state[_OPEN_KEY].get(dimension) == str(level_id)
         status = state.get("estado", "Pendiente")
         status_class = _status_class(status)
+        card_classes = ["level-card", f"level-card--{status_class}"]
+        if state.get("en_calculo"):
+            card_classes.append("level-card--answered")
+        if st.session_state[_ERROR_KEY][dimension].get(level_id):
+            card_classes.append("level-card--error")
 
-        card_container = st.container()
-        with card_container:
-            st.markdown(
-                f"<div class='level-card level-card--{status_class}' id='{dimension}-{level_id}'>",
-                unsafe_allow_html=True,
-            )
-            header_cols = st.columns([4, 1, 0.6])
-            with header_cols[0]:
-                st.markdown(
-                    f"<div class='level-card__title'>Nivel {level_id}</div>",
-                    unsafe_allow_html=True,
-                )
-            with header_cols[1]:
-                st.markdown(
-                    f"<span class='level-card__chip level-card__chip--{status_class}'>{status}</span>",
-                    unsafe_allow_html=True,
-                )
-            with header_cols[2]:
-                popover_fn = getattr(st, "popover", None)
-                if callable(popover_fn):
-                    # Streamlit popovers do not support custom keys, so we build
-                    # an "invisible" label based on zero-width spaces to keep each
-                    # widget identifier unique without showing extra text.
-                    invisible_label = "\u200b" * (level_id + 1)
-                    with popover_fn(
-                        invisible_label,
-                        icon=":material/more_vert:",
-                        help="Acciones del nivel",
-                    ):
-                        st.markdown("**Acciones**")
-                        if st.button(
-                            "Editar",
-                            key=f"btn_edit_{dimension}_{level_id}",
-                            use_container_width=True,
-                        ):
-                            _go_to_level(dimension, level_id)
-                            st.session_state[_BANNER_KEY][dimension] = None
-                            _rerun_app()
-                else:
-                    if st.button(
-                        "⋮",
-                        key=f"btn_edit_fallback_{dimension}_{level_id}",
-                        help="Editar nivel",
-                    ):
-                        _go_to_level(dimension, level_id)
-                        st.session_state[_BANNER_KEY][dimension] = None
-                        _rerun_app()
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='{' '.join(card_classes)}' id='{dimension}-{level_id}'>",
+            unsafe_allow_html=True,
+        )
 
         expander_label = f"Nivel {level_id} · {level['descripcion']}"
+        expanded = bool(st.session_state[_ERROR_KEY][dimension].get(level_id))
         with st.expander(
             expander_label,
-            expanded=open_flag,
+            expanded=expanded,
         ):
             preguntas = level.get("preguntas") or []
             answer_key = f"resp_{dimension}_{level_id}"
@@ -1092,11 +1023,9 @@ def _render_dimension_tab(dimension: str) -> None:
                     st.session_state[_ERROR_KEY][dimension][level_id] = None
                     _sync_dimension_score(dimension)
                     st.toast("Guardado")
-                    st.session_state[_OPEN_KEY][dimension] = None
                     _rerun_app()
 
-def _go_to_level(dimension: str, level_id: int) -> None:
-    st.session_state[_OPEN_KEY][dimension] = str(level_id)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def _collect_dimension_responses() -> pd.DataFrame:
     _init_irl_state()
@@ -1477,107 +1406,83 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .level-card {
-    border-radius: 18px;
-    padding: 1rem 1.2rem;
-    border: 1px solid rgba(var(--shadow-color), 0.16);
-    background: rgba(255, 255, 255, 0.92);
-    box-shadow: 0 12px 28px rgba(var(--shadow-color), 0.18);
-    margin-bottom: 0.7rem;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.level-card--complete {
-    background: linear-gradient(145deg, #0c3d21, #16522f);
-    border: 1px solid rgba(12, 61, 33, 0.6);
-    box-shadow: 0 18px 34px rgba(12, 61, 33, 0.38);
-}
-
-.level-card--complete .level-card__title,
-.level-card--complete .level-card__intro,
-.level-card--complete .level-card__description {
-    color: #f3fff4;
-}
-
-.level-card--complete .level-card__chip {
-    background: rgba(237, 255, 239, 0.2);
-    border-color: rgba(237, 255, 239, 0.45);
-    color: #ffffff;
+    border-radius: 22px;
+    border: 2px solid rgba(var(--shadow-color), 0.18);
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 16px 30px rgba(var(--shadow-color), 0.16);
+    margin-bottom: 1.1rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .level-card:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 18px 36px rgba(var(--shadow-color), 0.22);
+    transform: translateY(-2px);
+    box-shadow: 0 22px 38px rgba(var(--shadow-color), 0.22);
 }
 
-.level-card__title {
+.level-card > div[data-testid="stExpander"] > details {
+    border: none;
+    background: transparent;
+}
+
+.level-card > div[data-testid="stExpander"] > details > summary {
     font-size: 1.05rem;
     font-weight: 700;
     color: var(--forest-800);
+    padding: 1.2rem 1.4rem;
+    list-style: none;
+    cursor: pointer;
 }
 
-.level-card__description {
-    font-size: 0.9rem;
+.level-card > div[data-testid="stExpander"] > details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.level-card > div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
+    padding: 0 1.4rem 1.4rem;
+    background: rgba(255, 255, 255, 0.98);
+    border-top: 1px solid rgba(var(--shadow-color), 0.12);
+}
+
+.level-card--answered {
+    border-color: rgba(34, 141, 96, 0.9);
+    box-shadow: 0 26px 42px rgba(34, 141, 96, 0.26);
+    background: linear-gradient(135deg, rgba(27, 112, 76, 0.12), rgba(19, 76, 51, 0.18));
+}
+
+.level-card--complete {
+    border-color: rgba(34, 141, 96, 0.7);
+}
+
+.level-card--complete > div[data-testid="stExpander"] > details > summary,
+.level-card--answered > div[data-testid="stExpander"] > details > summary {
+    color: #0f3d28;
+}
+
+.level-card--pending {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.level-card--attention {
+    border-color: rgba(224, 156, 70, 0.82);
+    background: linear-gradient(135deg, rgba(224, 156, 70, 0.08), rgba(224, 156, 70, 0.14));
+}
+
+.level-card--review {
+    border-color: rgba(156, 112, 230, 0.75);
+    background: linear-gradient(135deg, rgba(156, 112, 230, 0.1), rgba(156, 112, 230, 0.16));
+}
+
+.level-card--error {
+    border-color: rgba(206, 104, 86, 0.88);
+    box-shadow: 0 24px 40px rgba(206, 104, 86, 0.24);
+    background: linear-gradient(135deg, rgba(206, 104, 86, 0.08), rgba(206, 104, 86, 0.14));
+}
+
+.level-card__intro {
+    font-size: 0.95rem;
     color: var(--text-600);
-    margin-top: 0.2rem;
-}
-
-.level-card__chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    padding: 0.35rem 0.85rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
-}
-
-.level-card__chip--complete {
-    background: rgba(46, 142, 86, 0.18);
-    color: #1d5134;
-    border: 1px solid rgba(46, 142, 86, 0.4);
-}
-
-.level-card__chip--pending {
-    background: rgba(143, 162, 180, 0.25);
-    color: #2d3e50;
-    border: 1px solid rgba(143, 162, 180, 0.4);
-}
-
-.level-card__chip--out {
-    background: rgba(220, 120, 68, 0.2);
-    color: #70351a;
-    border: 1px solid rgba(220, 120, 68, 0.35);
-}
-
-.level-card__chip--review {
-    background: rgba(177, 131, 255, 0.22);
-    color: #452f77;
-    border: 1px solid rgba(177, 131, 255, 0.42);
-}
-
-.level-card button[kind="secondary"] {
-    border-radius: 999px;
-    border: 1px solid rgba(var(--forest-500), 0.25);
-    background: rgba(var(--forest-500), 0.12);
-    color: var(--forest-800);
-    font-weight: 600;
-    font-size: 0.78rem;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease;
-}
-
-.level-card:hover button[kind="secondary"],
-.level-card button[kind="secondary"]:focus-visible {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.level-card button[kind="secondary"]:focus-visible {
-    outline: 2px solid var(--forest-600);
-    outline-offset: 2px;
+    margin-bottom: 1rem;
+    line-height: 1.55;
 }
 
 .stepper-form__counter {
