@@ -571,23 +571,7 @@ def _init_irl_state() -> None:
                     "en_calculo": False,
                     "fuera_calculo": False,
                     "marcado_revision": False,
-                    "preguntas": [
-                        {
-                            "indice": idx,
-                            "texto": pregunta,
-                            "respuesta": None,
-                            "evidencia": "",
-                            "estado_auto": "Pendiente",
-                            "en_calculo": False,
-                            "fuera_calculo": False,
-                        }
-                        for idx, pregunta in enumerate(level.get("preguntas") or [level.get("descripcion", "")])
-                    ],
                 }
-    else:
-        for dimension in STEP_TABS:
-            for level in LEVEL_DEFINITIONS.get(dimension, []):
-                _ensure_level_question_state(dimension, level)
     if _OPEN_KEY not in st.session_state:
         st.session_state[_OPEN_KEY] = {
             dimension: str(LEVEL_DEFINITIONS.get(dimension, [{"nivel": 1}])[0]["nivel"])
@@ -631,139 +615,14 @@ def _set_level_state(
     st.session_state[_STATE_KEY][dimension][level_id] = state
 
 
-def _question_state(dimension: str, level_id: int, question_index: int) -> dict:
-    state = _level_state(dimension, level_id)
-    preguntas = state.setdefault("preguntas", [])
-    if question_index >= len(preguntas):
-        preguntas.extend(
-            [
-                {
-                    "indice": idx,
-                    "texto": "",
-                    "respuesta": None,
-                    "evidencia": "",
-                    "estado_auto": "Pendiente",
-                    "en_calculo": False,
-                    "fuera_calculo": False,
-                }
-                for idx in range(len(preguntas), question_index + 1)
-            ]
-        )
-        state["preguntas"] = preguntas
-        st.session_state[_STATE_KEY][dimension][level_id] = state
-    return state["preguntas"][question_index]
-
-
-def _set_question_state(
-    dimension: str,
-    level_id: int,
-    question_index: int,
-    *,
-    respuesta: str | None = None,
-    evidencia: str | None = None,
-    estado_auto: str | None = None,
-    en_calculo: bool | None = None,
-) -> None:
-    state = _level_state(dimension, level_id)
-    preguntas = state.setdefault("preguntas", [])
-    if question_index >= len(preguntas):
-        _question_state(dimension, level_id, question_index)
-        state = _level_state(dimension, level_id)
-        preguntas = state.setdefault("preguntas", [])
-    question = preguntas[question_index]
-    if respuesta is not None:
-        question["respuesta"] = respuesta
-    if evidencia is not None:
-        question["evidencia"] = evidencia
-    if estado_auto is not None:
-        question["estado_auto"] = estado_auto
-    if en_calculo is not None:
-        question["en_calculo"] = en_calculo
-    question["fuera_calculo"] = question.get("estado_auto") == "Fuera de cálculo"
-    preguntas[question_index] = question
-    state["preguntas"] = preguntas
-    st.session_state[_STATE_KEY][dimension][level_id] = state
-
-
-def _ensure_level_question_state(dimension: str, level: dict) -> None:
-    level_id = level["nivel"]
-    state = st.session_state[_STATE_KEY][dimension][level_id]
-    preguntas_def = level.get("preguntas") or [level.get("descripcion", "")]
-    preguntas = state.get("preguntas") or []
-    if len(preguntas) != len(preguntas_def):
-        nuevas_preguntas = []
-        for idx, pregunta in enumerate(preguntas_def):
-            origen = preguntas[idx] if idx < len(preguntas) else None
-            nuevas_preguntas.append(
-                {
-                    "indice": idx,
-                    "texto": pregunta,
-                    "respuesta": (origen or {}).get("respuesta"),
-                    "evidencia": (origen or {}).get("evidencia", ""),
-                    "estado_auto": (origen or {}).get("estado_auto", "Pendiente"),
-                    "en_calculo": (origen or {}).get("en_calculo", False),
-                    "fuera_calculo": (origen or {}).get("estado_auto") == "Fuera de cálculo",
-                }
-            )
-        state["preguntas"] = nuevas_preguntas
-        state["respuesta"] = None
-        state["evidencia"] = ""
-        st.session_state[_STATE_KEY][dimension][level_id] = state
-    else:
-        for idx, pregunta in enumerate(preguntas_def):
-            state["preguntas"][idx]["texto"] = pregunta
-        st.session_state[_STATE_KEY][dimension][level_id] = state
-    _update_level_status_from_questions(dimension, level_id)
-
-
-def _update_level_status_from_questions(dimension: str, level_id: int) -> None:
-    state = _level_state(dimension, level_id)
-    preguntas = state.get("preguntas") or []
-    if not preguntas:
-        state["fuera_calculo"] = state.get("estado_auto") == "Fuera de cálculo"
-        if state.get("marcado_revision"):
-            state["estado"] = "Revisión requerida"
-        else:
-            state["estado"] = state.get("estado_auto", "Pendiente")
-        st.session_state[_STATE_KEY][dimension][level_id] = state
-        return
-
-    pendientes = any(p.get("respuesta") not in {"VERDADERO", "FALSO"} for p in preguntas)
-    fuera = any(p.get("estado_auto") == "Fuera de cálculo" for p in preguntas)
-    en_calculo = all(p.get("en_calculo") for p in preguntas if p.get("respuesta") in {"VERDADERO", "FALSO"}) and not pendientes and not fuera
-
-    if pendientes:
-        estado_auto = "Pendiente"
-        en_calculo_flag = False
-    elif fuera:
-        estado_auto = "Fuera de cálculo"
-        en_calculo_flag = False
-    else:
-        estado_auto = "Respondido (en cálculo)"
-        en_calculo_flag = en_calculo
-
-    state["estado_auto"] = estado_auto
-    state["en_calculo"] = en_calculo_flag
-    state["fuera_calculo"] = estado_auto == "Fuera de cálculo"
-    if all(p.get("respuesta") == "VERDADERO" and p.get("en_calculo") for p in preguntas) and not state.get("marcado_revision"):
-        state["respuesta"] = "VERDADERO"
-    elif any(p.get("respuesta") == "FALSO" for p in preguntas) and not state.get("marcado_revision"):
-        state["respuesta"] = "FALSO"
-    else:
-        state["respuesta"] = None
-
-    if state.get("marcado_revision"):
-        state["estado"] = "Revisión requerida"
-    else:
-        state["estado"] = estado_auto
-    st.session_state[_STATE_KEY][dimension][level_id] = state
-
-
 def _toggle_revision(dimension: str, level_id: int) -> None:
     state = _level_state(dimension, level_id)
     state["marcado_revision"] = not state.get("marcado_revision", False)
+    if state["marcado_revision"]:
+        state["estado"] = "Revisión requerida"
+    else:
+        state["estado"] = state.get("estado_auto", "Pendiente")
     st.session_state[_STATE_KEY][dimension][level_id] = state
-    _update_level_status_from_questions(dimension, level_id)
 
 
 def _sync_dimension_score(dimension: str) -> int:
@@ -771,15 +630,7 @@ def _sync_dimension_score(dimension: str) -> int:
     highest = 0
     for level in niveles:
         level_state = _level_state(dimension, level["nivel"])
-        preguntas = level_state.get("preguntas") or []
-        if preguntas:
-            if all(
-                pregunta.get("respuesta") == "VERDADERO" and pregunta.get("en_calculo")
-                for pregunta in preguntas
-            ) and level_state.get("en_calculo"):
-                highest = max(highest, level["nivel"])
-            continue
-        if level_state.get("respuesta") == "VERDADERO" and level_state.get("en_calculo"):
+        if level_state["respuesta"] == "VERDADERO" and level_state["en_calculo"]:
             highest = max(highest, level["nivel"])
     st.session_state["irl_scores"][dimension] = highest
     return highest
@@ -805,6 +656,12 @@ def _compute_dimension_counts(dimension: str) -> dict:
         "revision": revision,
     }
 
+def _dimension_badge_class(status: str) -> str:
+    return {
+        "Completa": "complete",
+        "Parcial": "partial",
+        "Pendiente": "pending",
+    }.get(status, "pending")
 
 def _dimension_badge(counts: dict) -> str:
     if counts["completed"] == counts["total"] and counts["fuera"] == 0 and counts["revision"] == 0:
@@ -829,106 +686,33 @@ def _status_class(status: str) -> str:
 def _handle_level_submission(
     dimension: str,
     level_id: int,
-    preguntas_payload: list[dict],
-) -> tuple[bool, dict[int, str], str | None]:
-    errores: dict[int, str] = {}
-    banner: str | None = None
-    any_fuera = False
+    respuesta: str | None,
+    evidencia: str,
+) -> tuple[bool, str | None, str | None]:
+    evidencia = evidencia.strip()
+    palabra_count = len(re.findall(r"[\wÀ-ÿ]+", evidencia)) if evidencia else 0
+    _set_level_state(dimension, level_id, respuesta=respuesta, evidencia=evidencia)
 
-    for pregunta in preguntas_payload:
-        idx = pregunta["indice"]
-        respuesta = pregunta.get("respuesta")
-        evidencia = (pregunta.get("evidencia") or "").strip()
-        palabra_count = len(re.findall(r"[\wÀ-ÿ]+", evidencia)) if evidencia else 0
+    if respuesta not in {"VERDADERO", "FALSO"}:
+        mensaje = "Selecciona VERDADERO o FALSO para continuar."
+        _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
+        return False, mensaje, mensaje
 
-        _set_question_state(
-            dimension,
-            level_id,
-            idx,
-            respuesta=respuesta if respuesta in {"VERDADERO", "FALSO"} else None,
-            evidencia=evidencia,
-        )
+    if respuesta == "VERDADERO":
+        if len(evidencia) < STEP_CONFIG["min_evidence_chars"] or palabra_count <= 5:
+            if STEP_CONFIG["evidence_obligatoria_strict"]:
+                mensaje = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
+                _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
+                return False, mensaje, mensaje
+            _set_level_state(dimension, level_id, estado_auto="Fuera de cálculo", en_calculo=False)
+            banner = "La respuesta se guardó como Fuera de cálculo hasta completar la evidencia."
+            return True, None, banner
+        _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
+        return True, None, None
 
-        if respuesta not in {"VERDADERO", "FALSO"}:
-            mensaje = "Selecciona VERDADERO o FALSO para continuar."
-            errores[idx] = mensaje
-            _set_question_state(
-                dimension,
-                level_id,
-                idx,
-                estado_auto="Pendiente",
-                en_calculo=False,
-            )
-            continue
-
-        if respuesta == "VERDADERO":
-            if len(evidencia) < STEP_CONFIG["min_evidence_chars"] or palabra_count <= 5:
-                if STEP_CONFIG["evidence_obligatoria_strict"]:
-                    mensaje = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
-                    errores[idx] = mensaje
-                    _set_question_state(
-                        dimension,
-                        level_id,
-                        idx,
-                        estado_auto="Pendiente",
-                        en_calculo=False,
-                    )
-                    continue
-                _set_question_state(
-                    dimension,
-                    level_id,
-                    idx,
-                    estado_auto="Fuera de cálculo",
-                    en_calculo=False,
-                )
-                any_fuera = True
-                continue
-            _set_question_state(
-                dimension,
-                level_id,
-                idx,
-                estado_auto="Respondido (en cálculo)",
-                en_calculo=True,
-            )
-            continue
-
-        _set_question_state(
-            dimension,
-            level_id,
-            idx,
-            estado_auto="Respondido (en cálculo)",
-            en_calculo=True,
-        )
-
-    _update_level_status_from_questions(dimension, level_id)
-
-    if errores:
-        primer_error = next(iter(errores.values()))
-        return False, errores, primer_error
-
-    if any_fuera:
-        banner = "La respuesta se guardó como Fuera de cálculo hasta completar la evidencia."
-
-    return True, {}, banner
-
-
-def _apply_question_inputs(
-    dimension: str,
-    level_id: int,
-    preguntas_payload: list[dict],
-) -> None:
-    for pregunta in preguntas_payload:
-        idx = pregunta["indice"]
-        respuesta = pregunta.get("respuesta")
-        evidencia = (pregunta.get("evidencia") or "").strip()
-        _set_question_state(
-            dimension,
-            level_id,
-            idx,
-            respuesta=respuesta if respuesta in {"VERDADERO", "FALSO"} else None,
-            evidencia=evidencia,
-        )
-    _update_level_status_from_questions(dimension, level_id)
+    # respuesta == "FALSO"
+    _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
+    return True, None, None
 
 
 def _go_to_level(dimension: str, level_id: int) -> None:
@@ -969,7 +753,6 @@ def _render_dimension_tab(dimension: str) -> None:
 
     for level in levels:
         level_id = level["nivel"]
-        _ensure_level_question_state(dimension, level)
         state = _level_state(dimension, level_id)
         open_flag = st.session_state[_OPEN_KEY].get(dimension) == str(level_id)
         status = state.get("estado", "Pendiente")
@@ -1000,88 +783,70 @@ def _render_dimension_tab(dimension: str) -> None:
                 ):
                     _go_to_level(dimension, level_id)
                     st.session_state[_BANNER_KEY][dimension] = None
-                    st.rerun()
+                    st.experimental_rerun()
             st.markdown("</div>", unsafe_allow_html=True)
 
         with st.expander(
             f"Detalles del nivel {level_id}",
             expanded=open_flag,
         ):
-            preguntas_payload: list[dict] = []
+            answer_key = f"resp_{dimension}_{level_id}"
+            evidencia_key = f"evid_{dimension}_{level_id}"
+            current_answer = state.get("respuesta")
+            current_answer_option = current_answer if current_answer in {"VERDADERO", "FALSO"} else "Sin respuesta"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = current_answer_option
+            if evidencia_key not in st.session_state:
+                st.session_state[evidencia_key] = state.get("evidencia", "")
+
             with st.form(f"form_{dimension}_{level_id}", clear_on_submit=False):
                 st.markdown(
                     f"<p class='level-card__intro'>{escape(level['descripcion'])}</p>",
                     unsafe_allow_html=True,
                 )
-                preguntas_def = level.get("preguntas") or [level.get("descripcion", "")]
-                for idx, pregunta_texto in enumerate(preguntas_def):
-                    pregunta_state = state.get("preguntas", [])
-                    if idx >= len(pregunta_state):
-                        _question_state(dimension, level_id, idx)
-                        pregunta_state = _level_state(dimension, level_id).get("preguntas", [])
-                    detalle = pregunta_state[idx]
+                if level.get("preguntas"):
+                    st.markdown("**Checklist sugerido:**")
+                    for pregunta in level["preguntas"]:
+                        st.markdown(f"- {pregunta}")
 
-                    answer_key = f"resp_{dimension}_{level_id}_{idx}"
-                    evidencia_key = f"evid_{dimension}_{level_id}_{idx}"
-                    respuesta_actual = detalle.get("respuesta")
-                    opcion_actual = (
-                        respuesta_actual if respuesta_actual in {"VERDADERO", "FALSO"} else "Sin respuesta"
-                    )
-                    if answer_key not in st.session_state:
-                        st.session_state[answer_key] = opcion_actual
-                    if evidencia_key not in st.session_state:
-                        st.session_state[evidencia_key] = detalle.get("evidencia", "")
+                answer_selection = st.radio(
+                    "Responder",
+                    options=["Sin respuesta", "VERDADERO", "FALSO"],
+                    index=["Sin respuesta", "VERDADERO", "FALSO"].index(st.session_state[answer_key])
+                    if st.session_state[answer_key] in {"Sin respuesta", "VERDADERO", "FALSO"}
+                    else 0,
+                    key=answer_key,
+                    horizontal=True,
+                )
+                respuesta = answer_selection if answer_selection in {"VERDADERO", "FALSO"} else None
 
-                    st.markdown(f"**Pregunta {idx + 1}.** {pregunta_texto}")
+                evidencia_texto = st.text_area(
+                    "Medio de verificación (texto)",
+                    value=st.session_state[evidencia_key],
+                    key=evidencia_key,
+                    placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
+                    height=160,
+                    max_chars=STEP_CONFIG["max_char_limit"],
+                )
 
-                    seleccion = st.radio(
-                        f"Respuesta a la pregunta {idx + 1}",
-                        options=["Sin respuesta", "VERDADERO", "FALSO"],
-                        index=["Sin respuesta", "VERDADERO", "FALSO"].index(
-                            st.session_state.get(answer_key, opcion_actual)
+                contador = len(evidencia_texto.strip())
+                contador_html = (
+                    f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
+                    f"{contador}/{STEP_CONFIG['soft_char_limit']}"
+                    "</div>"
+                )
+                st.markdown(contador_html, unsafe_allow_html=True)
+
+                if evidencia_texto:
+                    palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
+                    if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
+                        st.info(
+                            "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
                         )
-                        if st.session_state.get(answer_key, opcion_actual) in {"Sin respuesta", "VERDADERO", "FALSO"}
-                        else 0,
-                        key=answer_key,
-                        horizontal=True,
-                    )
-                    respuesta = seleccion if seleccion in {"VERDADERO", "FALSO"} else None
 
-                    evidencia_texto = st.text_area(
-                        "Medio de verificación (texto)",
-                        value=st.session_state.get(evidencia_key, detalle.get("evidencia", "")),
-                        key=evidencia_key,
-                        placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
-                        height=160,
-                        max_chars=STEP_CONFIG["max_char_limit"],
-                    )
-
-                    contador = len(evidencia_texto.strip())
-                    contador_html = (
-                        f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
-                        f"{contador}/{STEP_CONFIG['soft_char_limit']}"
-                        "</div>"
-                    )
-                    st.markdown(contador_html, unsafe_allow_html=True)
-
-                    if evidencia_texto:
-                        palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
-                        if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
-                            st.info(
-                                "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
-                            )
-
-                    error_msg = st.session_state[_ERROR_KEY][dimension].get((level_id, idx))
-                    if error_msg:
-                        st.error(error_msg)
-
-                    preguntas_payload.append(
-                        {
-                            "indice": idx,
-                            "respuesta": respuesta,
-                            "evidencia": evidencia_texto,
-                        }
-                    )
+                error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
+                if error_msg:
+                    st.error(error_msg)
 
                 col_guardar, col_siguiente, col_anterior, col_revision = st.columns(4)
                 guardar = col_guardar.form_submit_button("Guardar")
@@ -1090,29 +855,24 @@ def _render_dimension_tab(dimension: str) -> None:
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
             if revision:
-                _apply_question_inputs(dimension, level_id, preguntas_payload)
+                _set_level_state(dimension, level_id, respuesta=respuesta, evidencia=evidencia_texto)
                 _toggle_revision(dimension, level_id)
                 st.session_state[_BANNER_KEY][dimension] = None
                 st.toast("Guardado")
-                st.rerun()
+                st.experimental_rerun()
 
             if guardar or siguiente or anterior:
-                _, error_messages, banner = _handle_level_submission(
+                success, error_message, banner = _handle_level_submission(
                     dimension,
                     level_id,
-                    preguntas_payload,
+                    respuesta,
+                    evidencia_texto,
                 )
                 st.session_state[_BANNER_KEY][dimension] = banner
-                errores_nivel = st.session_state[_ERROR_KEY][dimension]
-                if error_messages:
-                    for idx, msg in error_messages.items():
-                        errores_nivel[(level_id, idx)] = msg
-                    for payload in preguntas_payload:
-                        if payload["indice"] not in error_messages:
-                            errores_nivel.pop((level_id, payload["indice"]), None)
+                if error_message:
+                    st.session_state[_ERROR_KEY][dimension][level_id] = error_message
                 else:
-                    for payload in preguntas_payload:
-                        errores_nivel.pop((level_id, payload["indice"]), None)
+                    st.session_state[_ERROR_KEY][dimension][level_id] = None
                     _sync_dimension_score(dimension)
                     st.toast("Guardado")
                     if guardar or siguiente:
@@ -1121,7 +881,7 @@ def _render_dimension_tab(dimension: str) -> None:
                     if anterior:
                         target = _next_level_id(dimension, level_id, -1)
                         _go_to_level(dimension, target)
-                    st.rerun()
+                    st.experimental_rerun()
 
     st.divider()
     st.markdown("#### Subsanar evidencias")
@@ -1145,15 +905,14 @@ def _render_dimension_tab(dimension: str) -> None:
                     use_container_width=True,
                 ):
                     _go_to_level(dimension, level_id)
-                    errores = st.session_state[_ERROR_KEY][dimension]
-                    preguntas = _level_state(dimension, level_id).get("preguntas", [])
-                    for pregunta in preguntas:
-                        errores[(level_id, pregunta.get("indice", 0))] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
+                    st.session_state[_ERROR_KEY][dimension][level_id] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
                     st.session_state[_BANNER_KEY][dimension] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
-                    st.rerun()
+                    st.experimental_rerun()
     else:
         st.caption("No hay niveles fuera de cálculo en esta pestaña.")
 
+def _go_to_level(dimension: str, level_id: int) -> None:
+    st.session_state[_OPEN_KEY][dimension] = str(level_id)
 
 def _collect_dimension_responses() -> pd.DataFrame:
     _init_irl_state()
@@ -1167,19 +926,7 @@ def _collect_dimension_responses() -> pd.DataFrame:
         highest = 0
         for level in niveles:
             data = _level_state(dimension, level["nivel"])
-            preguntas = data.get("preguntas") or []
-            if preguntas:
-                if all(
-                    pregunta.get("respuesta") == "VERDADERO" and pregunta.get("en_calculo")
-                    for pregunta in preguntas
-                ) and data.get("en_calculo"):
-                    highest = max(highest, level["nivel"])
-                for pregunta in preguntas:
-                    if pregunta.get("respuesta") == "VERDADERO" and pregunta.get("en_calculo"):
-                        evidencia_txt = (pregunta.get("evidencia") or "").strip()
-                        if evidencia_txt:
-                            evidencias.append(evidencia_txt)
-            elif data.get("respuesta") == "VERDADERO" and data.get("en_calculo"):
+            if data.get("respuesta") == "VERDADERO" and data.get("en_calculo"):
                 highest = max(highest, level["nivel"])
                 evidencia_txt = (data.get("evidencia") or "").strip()
                 if evidencia_txt:
@@ -1654,22 +1401,24 @@ div[data-testid="stDataEditor"] {
 
 div[data-testid="stDataFrame"] div[role="columnheader"],
 div[data-testid="stDataEditor"] div[role="columnheader"] {
-    background: linear-gradient(120deg, rgba(var(--forest-500), 0.28), rgba(var(--forest-500), 0.18)) !important;
-    color: var(--forest-900) !important;
+    background: linear-gradient(135deg, var(--forest-700), var(--forest-500)) !important;
+    color: #ffffff !important;
     font-weight: 700;
     font-size: 0.92rem;
     text-transform: uppercase;
     letter-spacing: 0.4px;
-    border-bottom: 1px solid rgba(var(--shadow-color), 0.14);
-    box-shadow: inset 0 -1px 0 rgba(var(--shadow-color), 0.08);
+    border-bottom: 2px solid rgba(12, 32, 20, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.14);
 }
 
 div[data-testid="stDataFrame"] div[role="gridcell"],
 div[data-testid="stDataEditor"] div[role="gridcell"] {
     color: var(--text-700);
     font-size: 0.92rem;
-    border-bottom: 1px solid rgba(var(--shadow-color), 0.08);
+    border-bottom: 1px solid rgba(var(--forest-700), 0.14);
+    border-right: 1px solid rgba(var(--forest-700), 0.1);
     padding: 0.55rem 0.75rem;
+    background: rgba(255, 255, 255, 0.92);
 }
 
 div[data-testid="stDataFrame"] div[role="row"],
@@ -1679,18 +1428,18 @@ div[data-testid="stDataEditor"] div[role="row"] {
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"],
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"] {
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.98);
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(even) div[role="row"],
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
-    background: rgba(var(--linen-200), 0.65);
+    background: rgba(199, 217, 182, 0.32);
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover,
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div div[role="row"]:hover {
-    background: rgba(var(--forest-200), 0.32);
-    box-shadow: inset 0 0 0 1px rgba(var(--forest-500), 0.35);
+    background: rgba(63, 129, 68, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(12, 32, 20, 0.2);
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover div[role="gridcell"],
