@@ -2141,11 +2141,9 @@ with st.container():
             .set_index("Dimensión")
         )
         with st.expander('Resumen numerico IRL', expanded=False):
-            render_table(
+            st.dataframe(
                 resumen_df,
-                key='fase1_resumen_irl',
-                include_actions=False,
-                hide_index=False,
+                use_container_width=True,
             )
 
     with radar_col_right:
