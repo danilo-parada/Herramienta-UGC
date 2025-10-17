@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -557,6 +558,7 @@ STEP_CONFIG = {
 _STATE_KEY = "irl_stepper_state"
 _ERROR_KEY = "irl_stepper_errors"
 _BANNER_KEY = "irl_stepper_banner"
+_CLOSE_EXPANDER_KEY = "irl_close_expander"
 
 _STATUS_CLASS_MAP = {
     "Pendiente": "pending",
@@ -609,6 +611,8 @@ def _init_irl_state() -> None:
         st.session_state[_ERROR_KEY] = {dimension: {} for dimension in STEP_TABS}
     if _BANNER_KEY not in st.session_state:
         st.session_state[_BANNER_KEY] = {dimension: None for dimension in STEP_TABS}
+    if _CLOSE_EXPANDER_KEY not in st.session_state:
+        st.session_state[_CLOSE_EXPANDER_KEY] = None
     if "irl_scores" not in st.session_state:
         st.session_state["irl_scores"] = {dimension: default for dimension, default in IRL_DIMENSIONS}
 
@@ -1022,8 +1026,24 @@ def _render_dimension_tab(dimension: str) -> None:
                 else:
                     st.session_state[_ERROR_KEY][dimension][level_id] = None
                     _sync_dimension_score(dimension)
+                    st.session_state[_CLOSE_EXPANDER_KEY] = (dimension, level_id)
                     st.toast("Guardado")
                     _rerun_app()
+
+        if st.session_state.get(_CLOSE_EXPANDER_KEY) == (dimension, level_id):
+            st.session_state[_CLOSE_EXPANDER_KEY] = None
+            components.html(
+                f"""
+                <script>
+                const container = window.parent.document.getElementById('{dimension}-{level_id}');
+                if (container) {{
+                    const details = container.querySelector("div[data-testid='stExpander'] details");
+                    if (details) {{ details.open = false; }}
+                }}
+                </script>
+                """,
+                height=0,
+            )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1410,7 +1430,7 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     border: 2px solid rgba(var(--shadow-color), 0.18);
     background: rgba(255, 255, 255, 0.95);
     box-shadow: 0 16px 30px rgba(var(--shadow-color), 0.16);
-    margin-bottom: 1.1rem;
+    margin-bottom: 0.55rem;
     transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
