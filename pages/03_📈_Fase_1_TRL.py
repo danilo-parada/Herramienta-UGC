@@ -739,6 +739,44 @@ def _aggregate_question_status(respuestas: dict[str, str | None]) -> str | None:
     return "FALSO"
 
 
+def _has_pending_changes(
+    level_state: dict,
+    respuestas_actuales: dict[str, str | None] | None,
+    respuesta_manual_actual: str | None,
+    evidencia_actual: str,
+    evidencias_preguntas_actuales: dict[str, str] | None,
+) -> bool:
+    evidencia_actual = (evidencia_actual or "").strip()
+
+    if respuestas_actuales is not None:
+        guardadas = level_state.get("respuestas_preguntas") or {}
+        if guardadas != respuestas_actuales:
+            return True
+    elif level_state.get("respuestas_preguntas"):
+        return True
+
+    if respuesta_manual_actual is not None:
+        if level_state.get("respuesta") != respuesta_manual_actual:
+            return True
+
+    saved_evidencias = level_state.get("evidencias_preguntas")
+    if evidencias_preguntas_actuales is not None:
+        normalizadas_guardadas = {
+            str(k): (v or "").strip() for k, v in (saved_evidencias or {}).items()
+        }
+        normalizadas_actuales = {
+            str(k): (v or "").strip() for k, v in evidencias_preguntas_actuales.items()
+        }
+        if normalizadas_guardadas != normalizadas_actuales:
+            return True
+
+    evidencia_guardada = (level_state.get("evidencia") or "").strip()
+    if evidencia_guardada != evidencia_actual:
+        return True
+
+    return False
+
+
 def _handle_level_submission(
     dimension: str,
     level_id: int,
@@ -877,6 +915,13 @@ def _render_dimension_tab(dimension: str) -> None:
                 if answer_key not in st.session_state:
                     st.session_state[answer_key] = current_option
 
+            respuestas_dict: dict[str, str | None] = {}
+            evidencias_dict_envio: dict[str, str] | None = None
+            respuesta_manual: str | None = None
+            normalizado_actual: dict[str, str | None] | None = None
+            ready_to_save = False
+            pending_changes = False
+
             with st.form(f"form_{dimension}_{level_id}", clear_on_submit=False):
                 st.markdown(
                     f"<p class='level-card__intro'>{escape(level['descripcion'])}</p>",
@@ -932,12 +977,12 @@ def _render_dimension_tab(dimension: str) -> None:
 
                 evidencia_texto = ""
                 if preguntas:
-                    evidencias_dict = {
+                    evidencias_dict_envio = {
                         idx_str: (st.session_state.get(e_key) or "")
                         for idx_str, e_key in evidencia_question_keys
                     }
                     evidencia_texto = " \n".join(
-                        texto.strip() for texto in evidencias_dict.values() if texto.strip()
+                        texto.strip() for texto in evidencias_dict_envio.values() if texto.strip()
                     )
                     st.session_state[evidencia_key] = evidencia_texto
                 else:
@@ -965,31 +1010,44 @@ def _render_dimension_tab(dimension: str) -> None:
                                 "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
                             )
 
+                respuestas_dict = {
+                    idx_str: (
+                        st.session_state.get(key)
+                        if st.session_state.get(key) in {"VERDADERO", "FALSO"}
+                        else None
+                    )
+                    for idx_str, key in question_keys
+                }
+
+                if preguntas:
+                    normalizado_actual = _normalize_question_responses(level, respuestas_dict)
+                    ready_to_save = all(
+                        valor in {"VERDADERO", "FALSO"} for valor in normalizado_actual.values()
+                    )
+                else:
+                    valor_manual = st.session_state.get(answer_key)
+                    if valor_manual in {"VERDADERO", "FALSO"}:
+                        respuesta_manual = valor_manual
+                    ready_to_save = respuesta_manual is not None
+
+                pending_changes = _has_pending_changes(
+                    state,
+                    normalizado_actual if preguntas else None,
+                    respuesta_manual,
+                    evidencia_texto,
+                    evidencias_dict_envio if preguntas else None,
+                )
+
+                if ready_to_save and pending_changes:
+                    st.info("Presiona **Guardar** para registrar tu respuesta.")
+
                 error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
                 if error_msg:
                     st.error(error_msg)
 
                 col_guardar, col_revision = st.columns([2, 1])
-                guardar = col_guardar.form_submit_button("Guardar")
+                guardar = col_guardar.form_submit_button("Guardar", disabled=not ready_to_save)
                 revision = col_revision.form_submit_button("Marcar para revisión")
-
-            respuestas_dict = {
-                idx_str: (st.session_state.get(key) if st.session_state.get(key) in {"VERDADERO", "FALSO"} else None)
-                for idx_str, key in question_keys
-            }
-            evidencias_dict_envio = (
-                {
-                    idx_str: (st.session_state.get(key) or "")
-                    for idx_str, key in evidencia_question_keys
-                }
-                if preguntas
-                else None
-            )
-            respuesta_manual = None
-            if not preguntas:
-                valor_manual = st.session_state.get(answer_key)
-                if valor_manual in {"VERDADERO", "FALSO"}:
-                    respuesta_manual = valor_manual
 
             if revision:
                 normalizado_revision = _normalize_question_responses(level, respuestas_dict)
