@@ -94,6 +94,84 @@ CRL_LEVELS = [
     },
 ]
 
+TRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Principios básicos observados.",
+        "preguntas": [
+            "¿Ha identificado beneficios potenciales o aplicaciones útiles en los resultados de su investigación?",
+            "¿Tiene una idea vaga de la tecnología a desarrollar?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Concepto y/o aplicación tecnológica formulada.",
+        "preguntas": [
+            "¿Cuenta con un concepto de tecnología potencial, definido y descrito en su primera versión?",
+            "¿Se pueden definir o investigar aplicaciones prácticas para esta tecnologia?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Prueba de concepto analítica y experimental de funciones y/o características críticas.",
+        "preguntas": [
+            "¿Ha realizado pruebas analíticas y/o experimentales de funciones o características críticas en entorno de laboratorio?",
+            "¿Ha iniciado una I+D activa para desarrollar aún más la tecnología?",
+            "¿Tiene una primera idea de los requisitos o especificaciones del usuario final y/o casos de uso?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Validación de la tecnología en el laboratorio.",
+        "preguntas": [
+            "¿Ha integrado y demostrado el funcionamiento conjunto de los componentes básicos en un entorno de laboratorio?",
+            "¿Los resultados de las pruebas brindan evidencia inicial que indica que el concepto de tecnología funcionará?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Validación de tecnología en un entorno relevante.",
+        "preguntas": [
+            "¿Ha integrado y probado los componentes básicos de la tecnología en un entorno relevante?",
+            "¿Los resultados de las pruebas brindan evidencia de que la tecnología funcionará, con validación técnica?",
+            "¿Ha definido los requisitos o especificaciones del usuario final y/o casos de uso, basados en comentarios de los usuarios?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Demostración del prototipo en un entorno relevante.",
+        "preguntas": [
+            "¿Ha demostrado que el modelo o prototipo representativo de la tecnología funciona realmente en un entorno relevante?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "Sistema/prototipo completo demostrado en ambiente operacional.",
+        "preguntas": [
+            "¿Ha demostrado que el prototipo o la tecnología completa funciona realmente en un entorno operativo?",
+            "¿Ha establecido los requisitos completos del usuario final/especificaciones y/o casos de uso?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Sistema tecnológico real completado y calificado mediante pruebas y demostraciones.",
+        "preguntas": [
+            "¿Cuenta con una tecnología completa que contiene todo lo necesario para que el usuario la utilice?",
+            "¿Cuenta con una tecnología funcional que resuelve el problema o necesidad del usuario?",
+            "¿Es la tecnología compatible con personas, procesos, objetivos, infraestructura, sistemas, etc., del usuario?",
+            "¿Han demostrado los primeros usuarios que la tecnología completa funciona en operaciones reales?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "Sistema tecnológico probado con éxito en entorno operativo real.",
+        "preguntas": [
+            "¿Es la tecnología completa escalable y ha sido comprobada en operaciones reales por varios usuarios a lo largo del tiempo?",
+            "¿Está en curso el desarrollo continuo, la mejora, la optimización de la tecnología y la producción?",
+        ],
+    },
+]
+
 BRL_LEVELS = [
     {
         "nivel": 1,
@@ -271,6 +349,41 @@ def _render_brl_tab():
         st.success(f"Nivel alcanzado: BRL {nivel_consecutivo}")
     else:
         st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel BRL.")
+
+
+def _render_trl_tab():
+    _init_irl_state()
+    st.markdown("#### Calculadora de madurez tecnológica (TRL)")
+    st.caption(
+        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
+    )
+    for level in TRL_LEVELS:
+        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
+        preguntas = level["preguntas"]
+        for idx, pregunta in enumerate(preguntas, start=1):
+            answer_key = f"irl_TRL_L{level['nivel']}_Q{idx}"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = "FALSO"
+            respuesta = st.radio(
+                pregunta,
+                options=["FALSO", "VERDADERO"],
+                horizontal=True,
+                key=answer_key,
+            )
+            if respuesta == "VERDADERO":
+                evidence_key = f"{answer_key}_evidencia"
+                st.text_input(
+                    "Acredite el medio de verificación con que cuenta",
+                    key=evidence_key,
+                )
+        st.divider()
+
+    nivel_consecutivo = _compute_consecutive_level("TRL", TRL_LEVELS)
+    st.session_state["irl_scores"]["TRL"] = nivel_consecutivo
+    if nivel_consecutivo:
+        st.success(f"Nivel alcanzado: TRL {nivel_consecutivo}")
+    else:
+        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel TRL.")
 
 
 def _render_placeholder_tab(dimension: str):
@@ -642,6 +755,8 @@ with st.container():
                 _render_crl_tab()
             elif dimension == "BRL":
                 _render_brl_tab()
+            elif dimension == "TRL":
+                _render_trl_tab()
             else:
                 _render_placeholder_tab(dimension)
     st.markdown("</div>", unsafe_allow_html=True)
