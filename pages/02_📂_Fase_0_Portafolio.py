@@ -396,26 +396,48 @@ div[data-testid="stDataEditor"] {
 
 div[data-testid="stDataFrame"] div[role="columnheader"],
 div[data-testid="stDataEditor"] div[role="columnheader"] {
-    background: rgba(var(--forest-500), 0.16) !important;
+    background: linear-gradient(120deg, rgba(var(--forest-500), 0.28), rgba(var(--forest-500), 0.18)) !important;
     color: var(--forest-900) !important;
     font-weight: 700;
     font-size: 0.92rem;
     text-transform: uppercase;
     letter-spacing: 0.4px;
+    border-bottom: 1px solid rgba(var(--shadow-color), 0.14);
+    box-shadow: inset 0 -1px 0 rgba(var(--shadow-color), 0.08);
 }
 
 div[data-testid="stDataFrame"] div[role="gridcell"],
 div[data-testid="stDataEditor"] div[role="gridcell"] {
     color: var(--text-700);
     font-size: 0.92rem;
+    border-bottom: 1px solid rgba(var(--shadow-color), 0.08);
+    padding: 0.55rem 0.75rem;
 }
 
-div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
-    background: rgba(var(--linen-200), 0.55);
+div[data-testid="stDataFrame"] div[role="row"],
+div[data-testid="stDataEditor"] div[role="row"] {
+    transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
+div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"],
+div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"] {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(even) div[role="row"],
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
-    background: rgba(255, 255, 255, 0.75);
+    background: rgba(var(--linen-200), 0.65);
+}
+
+div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover,
+div[data-testid="stDataEditor"] div[role="rowgroup"] > div div[role="row"]:hover {
+    background: rgba(var(--forest-200), 0.32);
+    box-shadow: inset 0 0 0 1px rgba(var(--forest-500), 0.35);
+}
+
+div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover div[role="gridcell"],
+div[data-testid="stDataEditor"] div[role="rowgroup"] > div div[role="row"]:hover div[role="gridcell"] {
+    border-bottom-color: transparent;
 }
 </style>
 """
