@@ -2068,9 +2068,6 @@ with st.container():
 
 with st.container():
     st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
-    st.markdown("### Resultado TRL consolidado")
-    st.caption("Se calcula automáticamente a partir de los niveles consecutivos validados en cada dimensión IRL.")
-
     df_respuestas = _collect_dimension_responses()
     if not df_respuestas.empty:
         resumen_vista = pd.DataFrame(
@@ -2092,7 +2089,7 @@ with st.container():
                 hide_index=True,
             )
     puntaje = trl.calcular_trl(df_respuestas[["dimension", "nivel", "evidencia"]]) if not df_respuestas.empty else None
-    st.metric("TRL estimado", f"{puntaje:.1f}" if puntaje is not None else "-")
+    st.metric("Nivel TRL alcanzado", f"{puntaje:.1f}" if puntaje is not None else "-")
 
     col_guardar, col_ayuda = st.columns([1, 1])
     with col_guardar:
