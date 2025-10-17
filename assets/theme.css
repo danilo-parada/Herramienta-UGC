@@ -104,6 +104,65 @@ h1, h2, h3, h4, h5, h6 {
   border-spacing: 0;
 }
 
+[data-testid="stTable"] table,
+.stDataFrame table,
+table.dataframe {
+  border: 1px solid rgba(63, 129, 68, 0.28);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+[data-testid="stTable"] table thead tr th,
+.stDataFrame table thead tr th,
+table.dataframe thead tr th {
+  background: linear-gradient(135deg, var(--forest-700), var(--forest-500)) !important;
+  color: #ffffff !important;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+  border-bottom: 2px solid rgba(63, 129, 68, 0.55);
+  padding: 0.85rem 1rem;
+}
+
+[data-testid="stTable"] table thead tr th:last-child,
+.stDataFrame table thead tr th:last-child,
+table.dataframe thead tr th:last-child {
+  border-right: none;
+}
+
+[data-testid="stTable"] table tbody tr td,
+.stDataFrame table tbody tr td,
+table.dataframe tbody tr td {
+  border-right: 1px solid rgba(63, 129, 68, 0.25);
+  border-bottom: 1px solid rgba(63, 129, 68, 0.25);
+  padding: 0.75rem 1rem;
+}
+
+[data-testid="stTable"] table tbody tr td:last-child,
+.stDataFrame table tbody tr td:last-child,
+table.dataframe tbody tr td:last-child {
+  border-right: none;
+}
+
+[data-testid="stTable"] table tbody tr:last-child td,
+.stDataFrame table tbody tr:last-child td,
+table.dataframe tbody tr:last-child td {
+  border-bottom: none;
+}
+
+[data-testid="stTable"] table tbody tr:nth-child(odd) td,
+.stDataFrame table tbody tr:nth-child(odd) td,
+table.dataframe tbody tr:nth-child(odd) td {
+  background: rgba(63, 129, 68, 0.06);
+}
+
+[data-testid="stTable"] table tbody tr:hover td,
+.stDataFrame table tbody tr:hover td,
+table.dataframe tbody tr:hover td {
+  background: rgba(63, 129, 68, 0.14);
+  transition: background 0.2s ease;
+}
+
 .stAlert {
   border-radius: 16px;
   border: 1px solid rgba(var(--shadow-color), 0.08);
