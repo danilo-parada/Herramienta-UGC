@@ -261,6 +261,100 @@ IPRL_LEVELS = [
     },
 ]
 
+TMRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Poca comprensión de la necesidad de un equipo (generalmente un individuo). Falta de competencias y/o recursos necesarios.",
+        "preguntas": [
+            "¿El equipo está conformado por más de una persona que posee las competencias necesarias en áreas claves como tecnología y negocios?",
+            "¿Tiene algo de conocimiento sobre las competencias y otros recursos necesarios (socios, proveedores de servicios, etc.) para verificar y desarrollar la idea?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Conocimiento y primera idea sobre las competencias necesarias o los recursos externos (por ejemplo, socios) requeridos",
+        "preguntas": [
+            "¿Tiene una primera idea de qué personas/competencias adicionales podrían ser necesarias para verificar/desarrollar la idea?",
+            "¿Tiene una primera idea del objetivo general del proyecto?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Algunas de las competencias o recursos necesarios están presentes. Existen otras competencias o recursos que se necesitan y deben definirse (junto a un plan de búsqueda).",
+        "preguntas": [
+            "¿Existen personas en el equipo con algunas, pero no todas, las competencias necesarias para comenzar a verificar la idea?",
+            "¿Ha identificado necesidades y brechas en competencias, capacidades y diversidad de equipos?",
+            "¿Tiene un plan inicial sobre cómo encontrar las competencias necesarias a corto plazo (<1 año)?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Un champion está presente. Varias de las competencias necesarias están presentes. Se inicia un plan para reclutar o asegurar recursos claves adicionales.",
+        "preguntas": [
+            "¿Hay un champion (impulsor y comprometido) en el equipo?",
+            "¿El equipo tiene varias, pero no todas, las competencias necesarias, generalmente en múltiples individuos?",
+            "¿Ha iniciado un plan para encontrar competencias y capacidades adicionales necesarias, teniendo en cuenta la diversidad del equipo?",
+            "¿El equipo ha iniciado discusiones sobre roles, compromiso, propiedad, etc., para avanzar en el proyecto?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "El equipo fundador inicial ya posee las principales competencias necesarias. El equipo acuerda la propiedad y los roles, y tiene objetivos alineados",
+        "preguntas": [
+            "¿Existe un equipo fundador inicial trabajando juntos y dedicando un tiempo significativo al proyecto?",
+            "¿El equipo fundador tiene en conjunto las principales competencias y capacidades necesarias para comenzar a construir la startup?",
+            "¿El equipo está alineado con roles claros, metas y visiones compartidas y un claro compromiso con el proyecto?",
+            "¿El equipo ha acordado sus respectivas participaciones accionarias con un acuerdo firmado?",
+            "¿Se han iniciado actividades para obtener competencias y capacidades adicionales, teniendo en cuenta la diversidad del equipo?",
+            "¿Se han implementado sistemas/procesos/herramientas iniciales para compartir conocimientos e información dentro del equipo?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Existe un equipo complementario, diverso y comprometido, con todas las competencias y recursos necesarios, tanto en el ámbito de los negocios como el tecnológico.",
+        "preguntas": [
+            "¿Existe un equipo fundador complementario y diverso, capaz de comenzar a construir un negocio?",
+            "¿Se cuenta con todas las competencias clave y la capacidad necesaria para el corto plazo, con claridad sobre quién es el director ejecutivo?",
+            "¿El equipo está comprometido, todos sienten responsabilidad y están preparados para asumir responsabilidades?",
+            "¿Ha iniciado la contratación de asesores y/o miembros del directorio, teniendo en cuenta la diversidad del directorio?",
+            "¿Existe conciencia de los riesgos que pueden afectar el desempeño del equipo (conflictos, burnout/salud mental, política, etc.)?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "El equipo y la cultura de la empresa están plenamente establecidos y desarrollados de forma proactiva. Hay un plan visualizado para formar el equipo que se necesita a largo plazo",
+        "preguntas": [
+            "¿El equipo funciona bien con roles claros?",
+            "¿Los objetivos, la visión, el propósito y la cultura están claramente articuladas y documentadas para apoyar al equipo y el desarrollo organizacional?",
+            "¿Está en marcha un plan para desarrollar la organización y hacer crecer el equipo a largo plazo (~2 años)?",
+            "¿Se han implementado procesos/sistemas y un plan de aprendizaje continuo para el desarrollo del personal?",
+            "¿El Directorio y los asesores están en funcionamiento y apoyan al desarrollo empresarial y organizacional?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Se cuenta con un CEO y equipo ejecutivo. Uso profesional del Directorio y de asesores. Se han activado planes y reclutamiento para la construcción de equipo a largo plazo.",
+        "preguntas": [
+            "¿Existe un liderazgo claro y un equipo de gestión con experiencia profesional relevante?",
+            "¿Se cuenta con un Directorio competente y diverso, y asesores relevantes utilizados profesionalmente?",
+            "¿Se han implementado políticas y procesos para asegurar buenas prácticas de recursos humanos y diversidad del equipo?",
+            "¿Se están realizando contrataciones necesarias de acuerdo con el plan a largo plazo para determinar las competencias, capacidad y diversidad relevantes?",
+            "¿Todos los niveles de la organización están debidamente capacitados y motivados?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "El equipo y la organización son de alto rendimiento y están correctamente estructurados. Ambos se mantienen y se desarrollan correctamente a lo largo del tiempo",
+        "preguntas": [
+            "¿La organización tiene un alto rendimiento y buen funcionamiento (cooperación, entorno social, etc.)?",
+            "¿Todos los niveles de la organización participan activamente en el aprendizaje y el desarrollo continuo?",
+            "¿La cultura organizacional, la estructura y los procesos se mejoran y desarrollan continuamente?",
+            "¿Los incentivos/recompensas están alineados para motivar a toda la organización para alcanzar las metas y desempeñarse bien?",
+            "¿El equipo directivo se mantiene, se desarrolla y se desempeña en el tiempo?",
+        ],
+    },
+]
+
 BRL_LEVELS = [
     {
         "nivel": 1,
@@ -508,6 +602,41 @@ def _render_iprl_tab():
         st.success(f"Nivel alcanzado: IPRL {nivel_consecutivo}")
     else:
         st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel IPRL.")
+
+
+def _render_tmrl_tab():
+    _init_irl_state()
+    st.markdown("#### Calculadora de madurez del equipo (TmRL)")
+    st.caption(
+        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
+    )
+    for level in TMRL_LEVELS:
+        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
+        preguntas = level["preguntas"]
+        for idx, pregunta in enumerate(preguntas, start=1):
+            answer_key = f"irl_TmRL_L{level['nivel']}_Q{idx}"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = "FALSO"
+            respuesta = st.radio(
+                pregunta,
+                options=["FALSO", "VERDADERO"],
+                horizontal=True,
+                key=answer_key,
+            )
+            if respuesta == "VERDADERO":
+                evidence_key = f"{answer_key}_evidencia"
+                st.text_input(
+                    "Acredite el medio de verificación con que cuenta",
+                    key=evidence_key,
+                )
+        st.divider()
+
+    nivel_consecutivo = _compute_consecutive_level("TmRL", TMRL_LEVELS)
+    st.session_state["irl_scores"]["TmRL"] = nivel_consecutivo
+    if nivel_consecutivo:
+        st.success(f"Nivel alcanzado: TmRL {nivel_consecutivo}")
+    else:
+        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel TmRL.")
 
 
 def _render_placeholder_tab(dimension: str):
@@ -883,6 +1012,8 @@ with st.container():
                 _render_trl_tab()
             elif dimension == "IPRL":
                 _render_iprl_tab()
+            elif dimension == "TmRL":
+                _render_tmrl_tab()
             else:
                 _render_placeholder_tab(dimension)
     st.markdown("</div>", unsafe_allow_html=True)
