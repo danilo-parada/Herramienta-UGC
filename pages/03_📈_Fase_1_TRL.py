@@ -1088,6 +1088,7 @@ def _render_dimension_tab(dimension: str) -> None:
                 guardar = col_guardar.form_submit_button(
                     "Guardar",
                     disabled=not st.session_state[_READY_KEY][dimension].get(level_id, False),
+                    type="primary",
                 )
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
@@ -1915,7 +1916,7 @@ with st.container():
 
     col_guardar, col_ayuda = st.columns([1, 1])
     with col_guardar:
-        if st.button("Guardar evaluacion"):
+        if st.button("Guardar evaluacion", type="primary"):
             if puntaje is None:
                 st.error("Define evidencias consecutivas en al menos una dimensión para calcular el TRL antes de guardar.")
             else:
