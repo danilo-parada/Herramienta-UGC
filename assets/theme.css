@@ -17,12 +17,12 @@
   --text-500: #546b58;
   --muted-400: #a7b5a6;
   --shadow-color: 26, 54, 38;
-  --andes-table-color-header-bg: #255734;
-  --andes-table-color-header-text: #ffffff;
+  --andes-table-color-header-bg: #cdebcf;
+  --andes-table-color-header-text: #1c3d28;
   --andes-table-color-row-alt: rgba(63, 129, 68, 0.06);
   --andes-table-hover-bg: rgba(63, 129, 68, 0.14);
   --andes-table-border-color: rgba(63, 129, 68, 0.2);
-  --andes-table-header-border: rgba(13, 40, 23, 0.35);
+  --andes-table-header-border: rgba(28, 61, 40, 0.35);
   --andes-table-radius-sm: 16px;
   --andes-table-shadow-sm: 0 20px 38px rgba(var(--shadow-color), 0.18);
   --andes-table-spacing-xs: 0.4rem;
