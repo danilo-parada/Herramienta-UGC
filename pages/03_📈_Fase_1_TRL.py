@@ -17,6 +17,7 @@ def _rerun_app() -> None:
         st.experimental_rerun()
 
 from core import db, utils, trl
+from core.data_table import render_table
 from core.db_trl import save_trl_result, get_trl_history
 from core.theme import load_theme
 
@@ -1535,17 +1536,18 @@ with st.container():
         )
         st.markdown(f"<div class='threshold-band'>{thresholds}</div>", unsafe_allow_html=True)
 
-    ranking_display = ranking_df.copy()
-    styled_ranking = ranking_display.style.format({'evaluacion_calculada': '{:.1f}'})
-    styled_ranking = styled_ranking.apply(
-        lambda row: [
-            'background-color: rgba(37, 87, 52, 0.18); color: #1f2a1d; font-weight:600' if row.name < 3 else ''
-            for _ in row
-        ],
-        axis=1,
-    )
+    ranking_display = ranking_df.copy().reset_index(drop=True)
+    if 'evaluacion_calculada' in ranking_display.columns:
+        ranking_display['evaluacion_calculada'] = ranking_display['evaluacion_calculada'].astype(float).round(1)
+
     with st.expander('Ver ranking priorizado', expanded=False):
-        st.dataframe(styled_ranking, use_container_width=True, hide_index=True)
+        render_table(
+            ranking_display,
+            key='fase1_ranking_andes',
+            highlight_top_rows=3,
+            include_actions=True,
+            hide_index=True,
+        )
     st.markdown("</div>", unsafe_allow_html=True)
 ranking_keys = ranking_df[['id_innovacion', 'ranking']].copy()
 ranking_keys['id_str'] = ranking_keys['id_innovacion'].astype(str)
@@ -1685,9 +1687,10 @@ with st.container():
         )
 
         with st.expander('Detalle de niveles por dimension', expanded=False):
-            st.dataframe(
+            render_table(
                 resumen_vista,
-                use_container_width=True,
+                key='fase1_detalle_dimensiones',
+                include_actions=False,
                 hide_index=True,
             )
     puntaje = trl.calcular_trl(df_respuestas[["dimension", "nivel", "evidencia"]]) if not df_respuestas.empty else None
@@ -1732,7 +1735,12 @@ with st.container():
             .set_index("Dimensión")
         )
         with st.expander('Resumen numerico IRL', expanded=False):
-            st.dataframe(resumen_df, use_container_width=True)
+            render_table(
+                resumen_df,
+                key='fase1_resumen_irl',
+                include_actions=False,
+                hide_index=False,
+            )
 
     with radar_col_right:
         labels = list(radar_values.keys())
@@ -1769,7 +1777,12 @@ with st.container():
         ultimo_registro = historial["fecha_eval"].iloc[0]
         st.caption(f"Ultima evaluacion registrada: {ultimo_registro}")
         with st.expander('Historial de evaluaciones', expanded=False):
-            st.dataframe(historial, use_container_width=True, hide_index=True)
+            render_table(
+                historial,
+                key='fase1_historial_trl',
+                include_actions=True,
+                hide_index=True,
+            )
 
         datos_ultimo = historial[historial["fecha_eval"] == ultimo_registro].copy()
         pivot = datos_ultimo.groupby("dimension", as_index=False)["nivel"].mean()

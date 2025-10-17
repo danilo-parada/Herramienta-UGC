@@ -71,6 +71,7 @@ import streamlit as st
 
 
 from core import db, utils
+from core.data_table import render_table
 from core.theme import load_theme
 
 
@@ -3622,12 +3623,18 @@ if resultado is not None and not resultado.empty:
 
 
 
-    styled = resultado.style.format({'evaluacion_calculada': '{:.1f}'})
-
-    styled = styled.apply(lambda row: ['background-color: #cfeedd' if row.name < 3 else '' for _ in row], axis=1)
-
     with st.expander('Ranking de candidatos priorizados', expanded=False):
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        ranking_display = resultado.copy().reset_index(drop=True)
+        if 'evaluacion_calculada' in ranking_display.columns:
+            ranking_display['evaluacion_calculada'] = ranking_display['evaluacion_calculada'].astype(float).round(1)
+
+        render_table(
+            ranking_display,
+            key='fase0_ranking_andes',
+            highlight_top_rows=3,
+            include_actions=True,
+            hide_index=True,
+        )
 
         if HAS_OPENPYXL:
             eval_buffer = BytesIO()

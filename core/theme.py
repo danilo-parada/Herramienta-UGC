@@ -5,11 +5,20 @@ from pathlib import Path
 import streamlit as st
 
 
-def load_theme() -> None:
-    """Inject the shared visual theme for the INFOR experience."""
-    css_path = Path(__file__).resolve().parent.parent / "assets" / "theme.css"
-    if not css_path.exists():
-        return
+def _read_asset(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
 
-    css = css_path.read_text(encoding="utf-8")
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
+def load_theme() -> None:
+    """Inject the shared visual theme and behaviour for the INFOR experience."""
+    assets_dir = Path(__file__).resolve().parent.parent / "assets"
+
+    css = _read_asset(assets_dir / "theme.css")
+    if css:
+        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
+    js = _read_asset(assets_dir / "theme.js")
+    if js:
+        st.markdown(f"<script>{js}</script>", unsafe_allow_html=True)
