@@ -559,6 +559,7 @@ _STATE_KEY = "irl_stepper_state"
 _ERROR_KEY = "irl_stepper_errors"
 _BANNER_KEY = "irl_stepper_banner"
 _CLOSE_EXPANDER_KEY = "irl_close_expander"
+_READY_KEY = "irl_level_ready"
 
 _STATUS_CLASS_MAP = {
     "Pendiente": "pending",
@@ -607,6 +608,20 @@ def _init_irl_state() -> None:
                 normalizado_evidencias[clave] = str(valor) if valor is not None else ""
             state["evidencias_preguntas"] = normalizado_evidencias
             st.session_state[_STATE_KEY][dimension][level["nivel"]] = state
+    if _READY_KEY not in st.session_state:
+        st.session_state[_READY_KEY] = {dimension: {} for dimension in STEP_TABS}
+    for dimension in STEP_TABS:
+        for level in LEVEL_DEFINITIONS.get(dimension, []):
+            preguntas = level.get("preguntas") or []
+            level_state = st.session_state[_STATE_KEY][dimension][level["nivel"]]
+            if preguntas:
+                listo = all(
+                    level_state.get("respuestas_preguntas", {}).get(str(idx)) in {"VERDADERO", "FALSO"}
+                    for idx in range(1, len(preguntas) + 1)
+                )
+            else:
+                listo = level_state.get("respuesta") in {"VERDADERO", "FALSO"}
+            st.session_state[_READY_KEY][dimension][level["nivel"]] = listo
     if _ERROR_KEY not in st.session_state:
         st.session_state[_ERROR_KEY] = {dimension: {} for dimension in STEP_TABS}
     if _BANNER_KEY not in st.session_state:
@@ -619,6 +634,28 @@ def _init_irl_state() -> None:
 
 def _level_state(dimension: str, level_id: int) -> dict:
     return st.session_state[_STATE_KEY][dimension][level_id]
+
+
+def _update_ready_flag(dimension: str, level_id: int) -> None:
+    _init_irl_state()
+    niveles = LEVEL_DEFINITIONS.get(dimension, [])
+    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
+    if not level_data:
+        return
+    preguntas = level_data.get("preguntas") or []
+    if preguntas:
+        listo = True
+        for idx in range(1, len(preguntas) + 1):
+            pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
+            valor = st.session_state.get(pregunta_key)
+            if valor not in {"VERDADERO", "FALSO"}:
+                listo = False
+                break
+    else:
+        answer_key = f"resp_{dimension}_{level_id}"
+        valor = st.session_state.get(answer_key)
+        listo = valor in {"VERDADERO", "FALSO"}
+    st.session_state[_READY_KEY][dimension][level_id] = listo
 
 
 def _set_level_state(
@@ -944,6 +981,8 @@ def _render_dimension_tab(dimension: str) -> None:
                                     options=["Sin respuesta", "VERDADERO", "FALSO"],
                                     key=pregunta_key,
                                     horizontal=True,
+                                    on_change=_update_ready_flag,
+                                    args=(dimension, level_id),
                                     label_visibility="collapsed",
                                 )
                         evidencia_texto = st.text_area(
@@ -973,6 +1012,8 @@ def _render_dimension_tab(dimension: str) -> None:
                         options=["Sin respuesta", "VERDADERO", "FALSO"],
                         key=answer_key,
                         horizontal=True,
+                        on_change=_update_ready_flag,
+                        args=(dimension, level_id),
                     )
 
                 evidencia_texto = ""
@@ -1030,6 +1071,8 @@ def _render_dimension_tab(dimension: str) -> None:
                         respuesta_manual = valor_manual
                     ready_to_save = respuesta_manual is not None
 
+                st.session_state[_READY_KEY][dimension][level_id] = ready_to_save
+
                 pending_changes = _has_pending_changes(
                     state,
                     normalizado_actual if preguntas else None,
@@ -1046,7 +1089,10 @@ def _render_dimension_tab(dimension: str) -> None:
                     st.error(error_msg)
 
                 col_guardar, col_revision = st.columns([2, 1])
-                guardar = col_guardar.form_submit_button("Guardar", disabled=not ready_to_save)
+                guardar = col_guardar.form_submit_button(
+                    "Guardar",
+                    disabled=not st.session_state[_READY_KEY][dimension].get(level_id, False),
+                )
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
             if revision:
@@ -1880,6 +1926,8 @@ with st.container():
                 try:
                     save_trl_result(project_id, df_respuestas[["dimension", "nivel", "evidencia"]], float(puntaje))
                     st.success("Evaluacion guardada correctamente.")
+                    _sync_all_scores()
+                    _rerun_app()
                 except Exception as error:
                     st.error(f"Error al guardar: {error}")
 
