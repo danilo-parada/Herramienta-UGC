@@ -981,8 +981,6 @@ def _render_dimension_tab(dimension: str) -> None:
                                     options=["Sin respuesta", "VERDADERO", "FALSO"],
                                     key=pregunta_key,
                                     horizontal=True,
-                                    on_change=_update_ready_flag,
-                                    args=(dimension, level_id),
                                     label_visibility="collapsed",
                                 )
                         evidencia_texto = st.text_area(
@@ -1012,8 +1010,6 @@ def _render_dimension_tab(dimension: str) -> None:
                         options=["Sin respuesta", "VERDADERO", "FALSO"],
                         key=answer_key,
                         horizontal=True,
-                        on_change=_update_ready_flag,
-                        args=(dimension, level_id),
                     )
 
                 evidencia_texto = ""
