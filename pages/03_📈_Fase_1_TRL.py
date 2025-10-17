@@ -172,6 +172,95 @@ TRL_LEVELS = [
     },
 ]
 
+
+IPRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Se cuenta con una hipótesis sobre posibles derechos de propiedad intelectual que se podrían obtener (como patentes, software, derechos de autor, diseños, secretos comerciales, etc).",
+        "preguntas": [
+            "¿Tiene una hipótesis sobre posibles derechos de propiedad intelectual que se podrían obtener (como patentes, software, derechos de autor, diseños, secretos comerciales, etc.)?",
+            "¿Tiene descripción y documentación de los posibles derechos de propiedad intelectual?",
+            "¿Tiene claridad sobre aspectos legales relevantes o pertinentes (propiedad, derechos de uso, etc.)?",
+            "¿Tiene conocimiento de los elementos únicos del invento y el campo técnico, estado del arte, publicaciones, etc.?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Identificación de las diferentes formas de posibles derechos de propiedad intelectual que podrían tener. La propiedad de los derechos es clara y no hay dudas de ser el dueño de los derechos de PI",
+        "preguntas": [
+            "¿Ha mapeado las diferentes formas de derechos de propiedad intelectual que existen o podrían surgir durante el desarrollo?",
+            "¿Tiene ideas específicas sobre los derechos de propiedad intelectual, aunque no estén bien descritas ni definidas?",
+            "¿Ha identificado acuerdos relacionados con la propiedad intelectual y aclarado la propiedad?",
+            "¿Ha identificado a los inventores/creadores y tiene conocimiento de las políticas de PI aplicables y potenciales restricciones en los contratos?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Descripción detallada de los posibles derechos de propiedad intelectual claves (por ejemplo, invención o código).",
+        "preguntas": [
+            "¿Ha considerado qué formas de derechos de propiedad intelectual son claves o más importantes y podrían/deberían protegerse?",
+            "¿Tiene una descripción suficientemente detallada de los posibles derechos de propiedad intelectual para evaluar la posibilidad de protección?",
+            "¿Ha realizado una evaluación de las posibilidades de protección a través de búsquedas de publicaciones, estado del arte, soluciones de última generación, etc.?",
+            "¿Ha realizado búsquedas o análisis iniciales del estado de la técnica pertinente o derechos de propiedad intelectual en conflicto con profesionales?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Confirmación sobre la viabilidad de la protección y mediante qué mecanismo. Decisión sobre el por qué de proteger determinados derechos de propiedad intelectual (relevancia para el negocio).",
+        "preguntas": [
+            "¿Ha confirmado la viabilidad de la protección de los derechos de propiedad intelectual claves a través de búsquedas/análisis por parte de un profesional?",
+            "¿Ha analizado los derechos de propiedad intelectual claves y definido prioridades sobre qué proteger para crear valor para el negocio/proyecto?",
+            "¿Ha presentado la primera solicitud/registro de derechos de propiedad intelectual en una forma menos elaborada (por ejemplo, patente provisional)?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Borrador de estrategia de los derechos de propiedad intelectual para usar estos derechos con fines comerciales. Presentación de la primera solicitud de patente completa.",
+        "preguntas": [
+            "¿Tiene un borrador de estrategia de los derechos de propiedad intelectual definida, idealmente por un profesional, sobre cómo usar los derechos de PI para proteger y ser valiosos para el negocio?",
+            "¿Ha presentado la primera solicitud/registro formal completo de derechos de propiedad intelectual claves en cooperación con un profesional?",
+            "¿Tiene acuerdos básicos vigentes para determinar el control de los derechos de propiedad intelectual claves (por ejemplo, asignaciones, propiedad, etc.)?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "La estrategia de protección se encuentra implementada y apoya el negocio. Respuesta positiva en solicitudes presentadas. Evaluación inicial de la libertad para operar.",
+        "preguntas": [
+            "¿Ha elaborado una estrategia completa de protección de los derechos de propiedad intelectual que sustenta la estrategia de negocio?",
+            "¿Ha identificado posibles derechos de propiedad intelectual complementarios/adicionales a proteger?",
+            "¿Ha realizado una evaluación inicial de la libertad para operar (freedom to operate) para comprender el panorama de los derechos de PI en el campo?",
+            "¿Ha recibido respuesta positiva a las solicitudes de derechos de PI por parte de las autoridades?",
+            "Si no ha recibido respuesta positiva, ¿ha realizado un análisis junto con profesionales con buenas perspectivas?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "Todos los derechos de propiedad intelectual claves han sido solicitados en los paises o regiones relevantes de acuerdo con la estrategia de derechos de propiedad intelectual",
+        "preguntas": [
+            "¿Ha solicitado todos los derechos de propiedad intelectual claves en los países o regiones relevantes de acuerdo con la estrategia de PI?",
+            "¿Ha realizado una evaluación más completa de la libertad para operar y tiene una comprensión clara de la dependencia/restricción de otros derechos de PI existentes?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Estrategia de protección y gestión de la propiedad intelectual completamente implementada. Evaluación más completa de la libertad de operar",
+        "preguntas": [
+            "¿Tiene una estrategia de protección y gestión de la propiedad intelectual completamente implementada?",
+            "¿Ha sido otorgado los derechos de propiedad intelectual clave en el primer país/región con alcance relevante para el negocio?",
+            "¿Ha presentado solicitud(es)/registro(s) de derechos de PI complementarios o adicionales?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "Sólido sustento y protección de derechos de propiedad intelectual para el negocio. Patente concedida y vigente en países relevantes",
+        "preguntas": [
+            "¿La estrategia de derechos de propiedad intelectual respalda y crea valor para el negocio?",
+            "¿Se han otorgado y se mantienen los derechos de propiedad intelectual claves y complementarios en varios países relevantes para los negocios?",
+            "¿Tiene acuerdos vigentes para acceder a todos los derechos de propiedad intelectual externos necesarios?",
+        ],
+    },
+]
+
 BRL_LEVELS = [
     {
         "nivel": 1,
@@ -384,6 +473,41 @@ def _render_trl_tab():
         st.success(f"Nivel alcanzado: TRL {nivel_consecutivo}")
     else:
         st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel TRL.")
+
+
+def _render_iprl_tab():
+    _init_irl_state()
+    st.markdown("#### Calculadora de madurez de propiedad intelectual (IPRL)")
+    st.caption(
+        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
+    )
+    for level in IPRL_LEVELS:
+        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
+        preguntas = level["preguntas"]
+        for idx, pregunta in enumerate(preguntas, start=1):
+            answer_key = f"irl_IPRL_L{level['nivel']}_Q{idx}"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = "FALSO"
+            respuesta = st.radio(
+                pregunta,
+                options=["FALSO", "VERDADERO"],
+                horizontal=True,
+                key=answer_key,
+            )
+            if respuesta == "VERDADERO":
+                evidence_key = f"{answer_key}_evidencia"
+                st.text_input(
+                    "Acredite el medio de verificación con que cuenta",
+                    key=evidence_key,
+                )
+        st.divider()
+
+    nivel_consecutivo = _compute_consecutive_level("IPRL", IPRL_LEVELS)
+    st.session_state["irl_scores"]["IPRL"] = nivel_consecutivo
+    if nivel_consecutivo:
+        st.success(f"Nivel alcanzado: IPRL {nivel_consecutivo}")
+    else:
+        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel IPRL.")
 
 
 def _render_placeholder_tab(dimension: str):
@@ -757,6 +881,8 @@ with st.container():
                 _render_brl_tab()
             elif dimension == "TRL":
                 _render_trl_tab()
+            elif dimension == "IPRL":
+                _render_iprl_tab()
             else:
                 _render_placeholder_tab(dimension)
     st.markdown("</div>", unsafe_allow_html=True)
