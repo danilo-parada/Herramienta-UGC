@@ -656,6 +656,12 @@ def _compute_dimension_counts(dimension: str) -> dict:
         "revision": revision,
     }
 
+def _dimension_badge_class(status: str) -> str:
+    return {
+        "Completa": "complete",
+        "Parcial": "partial",
+        "Pendiente": "pending",
+    }.get(status, "pending")
 
 def _dimension_badge(counts: dict) -> str:
     if counts["completed"] == counts["total"] and counts["fuera"] == 0 and counts["revision"] == 0:
@@ -905,6 +911,8 @@ def _render_dimension_tab(dimension: str) -> None:
     else:
         st.caption("No hay niveles fuera de cálculo en esta pestaña.")
 
+def _go_to_level(dimension: str, level_id: int) -> None:
+    st.session_state[_OPEN_KEY][dimension] = str(level_id)
 
 def _collect_dimension_responses() -> pd.DataFrame:
     _init_irl_state()
