@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from pathlib import Path
 from html import escape
+import re
 
 from core import db, utils, trl
 from core.db_trl import save_trl_result, get_trl_history
@@ -525,28 +526,384 @@ BRL_LEVELS = [
     },
 ]
 
-def _init_irl_state():
+STEP_TABS = [dimension for dimension, _ in IRL_DIMENSIONS]
+LEVEL_DEFINITIONS = {
+    "CRL": CRL_LEVELS,
+    "BRL": BRL_LEVELS,
+    "TRL": TRL_LEVELS,
+    "IPRL": IPRL_LEVELS,
+    "TmRL": TMRL_LEVELS,
+    "FRL": FRL_LEVELS,
+}
+
+STEP_CONFIG = {
+    "min_evidence_chars": 40,
+    "soft_char_limit": 400,
+    "max_char_limit": 600,
+    "evidence_obligatoria_strict": False,
+    "secuencia_flexible": True,
+}
+
+_STATE_KEY = "irl_stepper_state"
+_OPEN_KEY = "irl_stepper_open_level"
+_ERROR_KEY = "irl_stepper_errors"
+_BANNER_KEY = "irl_stepper_banner"
+
+_STATUS_CLASS_MAP = {
+    "Pendiente": "pending",
+    "Respondido (en cálculo)": "complete",
+    "Fuera de cálculo": "out",
+    "Revisión requerida": "review",
+}
+
+
+def _init_irl_state() -> None:
+    if _STATE_KEY not in st.session_state:
+        st.session_state[_STATE_KEY] = {}
+        for dimension in STEP_TABS:
+            st.session_state[_STATE_KEY][dimension] = {}
+            for level in LEVEL_DEFINITIONS.get(dimension, []):
+                st.session_state[_STATE_KEY][dimension][level["nivel"]] = {
+                    "respuesta": None,
+                    "evidencia": "",
+                    "estado": "Pendiente",
+                    "estado_auto": "Pendiente",
+                    "en_calculo": False,
+                    "fuera_calculo": False,
+                    "marcado_revision": False,
+                }
+    if _OPEN_KEY not in st.session_state:
+        st.session_state[_OPEN_KEY] = {
+            dimension: str(LEVEL_DEFINITIONS.get(dimension, [{"nivel": 1}])[0]["nivel"])
+            for dimension in STEP_TABS
+        }
+    if _ERROR_KEY not in st.session_state:
+        st.session_state[_ERROR_KEY] = {dimension: {} for dimension in STEP_TABS}
+    if _BANNER_KEY not in st.session_state:
+        st.session_state[_BANNER_KEY] = {dimension: None for dimension in STEP_TABS}
     if "irl_scores" not in st.session_state:
         st.session_state["irl_scores"] = {dimension: default for dimension, default in IRL_DIMENSIONS}
-    if "irl_answers" not in st.session_state:
-        st.session_state["irl_answers"] = {}
 
 
-def _compute_consecutive_level(dimension: str, levels: list[dict]) -> int:
-    reached_level = 0
-    for level_data in levels:
-        preguntas = level_data.get("preguntas", [])
-        nivel_validado = True
-        for idx, _ in enumerate(preguntas, start=1):
-            answer_key = f"irl_{dimension}_L{level_data['nivel']}_Q{idx}"
-            if st.session_state.get(answer_key, "FALSO") != "VERDADERO":
-                nivel_validado = False
-                break
-        if nivel_validado:
-            reached_level = level_data["nivel"]
+def _level_state(dimension: str, level_id: int) -> dict:
+    return st.session_state[_STATE_KEY][dimension][level_id]
+
+
+def _set_level_state(
+    dimension: str,
+    level_id: int,
+    *,
+    respuesta: str | None = None,
+    evidencia: str | None = None,
+    estado_auto: str | None = None,
+    en_calculo: bool | None = None,
+) -> None:
+    state = _level_state(dimension, level_id)
+    if respuesta is not None:
+        state["respuesta"] = respuesta
+    if evidencia is not None:
+        state["evidencia"] = evidencia
+    if estado_auto is not None:
+        state["estado_auto"] = estado_auto
+    if en_calculo is not None:
+        state["en_calculo"] = en_calculo
+    state["fuera_calculo"] = state.get("estado_auto") == "Fuera de cálculo"
+    if state.get("marcado_revision"):
+        state["estado"] = "Revisión requerida"
+    else:
+        state["estado"] = state.get("estado_auto", "Pendiente")
+    st.session_state[_STATE_KEY][dimension][level_id] = state
+
+
+def _toggle_revision(dimension: str, level_id: int) -> None:
+    state = _level_state(dimension, level_id)
+    state["marcado_revision"] = not state.get("marcado_revision", False)
+    if state["marcado_revision"]:
+        state["estado"] = "Revisión requerida"
+    else:
+        state["estado"] = state.get("estado_auto", "Pendiente")
+    st.session_state[_STATE_KEY][dimension][level_id] = state
+
+
+def _sync_dimension_score(dimension: str) -> int:
+    niveles = LEVEL_DEFINITIONS.get(dimension, [])
+    highest = 0
+    for level in niveles:
+        level_state = _level_state(dimension, level["nivel"])
+        if level_state["respuesta"] == "VERDADERO" and level_state["en_calculo"]:
+            highest = max(highest, level["nivel"])
+    st.session_state["irl_scores"][dimension] = highest
+    return highest
+
+
+def _sync_all_scores() -> None:
+    for dimension in STEP_TABS:
+        _sync_dimension_score(dimension)
+
+
+def _compute_dimension_counts(dimension: str) -> dict:
+    niveles = st.session_state[_STATE_KEY][dimension]
+    total = len(niveles)
+    completados = sum(1 for data in niveles.values() if data.get("en_calculo"))
+    fuera = sum(1 for data in niveles.values() if data.get("estado_auto") == "Fuera de cálculo")
+    pendientes = max(total - completados - fuera, 0)
+    revision = sum(1 for data in niveles.values() if data.get("marcado_revision"))
+    return {
+        "total": total,
+        "completed": completados,
+        "fuera": fuera,
+        "pending": pendientes,
+        "revision": revision,
+    }
+
+
+def _dimension_badge(counts: dict) -> str:
+    if counts["completed"] == counts["total"] and counts["fuera"] == 0 and counts["revision"] == 0:
+        return "Completa"
+    if counts["completed"] or counts["fuera"] or counts["revision"]:
+        return "Parcial"
+    return "Pendiente"
+
+
+def _dimension_badge_class(status: str) -> str:
+    return {
+        "Completa": "complete",
+        "Parcial": "partial",
+        "Pendiente": "pending",
+    }.get(status, "pending")
+
+
+def _status_class(status: str) -> str:
+    return _STATUS_CLASS_MAP.get(status, "pending")
+
+
+def _handle_level_submission(
+    dimension: str,
+    level_id: int,
+    respuesta: str | None,
+    evidencia: str,
+) -> tuple[bool, str | None, str | None]:
+    evidencia = evidencia.strip()
+    palabra_count = len(re.findall(r"[\wÀ-ÿ]+", evidencia)) if evidencia else 0
+    _set_level_state(dimension, level_id, respuesta=respuesta, evidencia=evidencia)
+
+    if respuesta not in {"VERDADERO", "FALSO"}:
+        mensaje = "Selecciona VERDADERO o FALSO para continuar."
+        _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
+        return False, mensaje, mensaje
+
+    if respuesta == "VERDADERO":
+        if len(evidencia) < STEP_CONFIG["min_evidence_chars"] or palabra_count <= 5:
+            if STEP_CONFIG["evidence_obligatoria_strict"]:
+                mensaje = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
+                _set_level_state(dimension, level_id, estado_auto="Pendiente", en_calculo=False)
+                return False, mensaje, mensaje
+            _set_level_state(dimension, level_id, estado_auto="Fuera de cálculo", en_calculo=False)
+            banner = "La respuesta se guardó como Fuera de cálculo hasta completar la evidencia."
+            return True, None, banner
+        _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
+        return True, None, None
+
+    # respuesta == "FALSO"
+    _set_level_state(dimension, level_id, estado_auto="Respondido (en cálculo)", en_calculo=True)
+    return True, None, None
+
+
+def _go_to_level(dimension: str, level_id: int) -> None:
+    st.session_state[_OPEN_KEY][dimension] = str(level_id)
+
+
+def _next_level_id(dimension: str, current_level: int, step: int) -> int:
+    niveles = [level["nivel"] for level in LEVEL_DEFINITIONS.get(dimension, [])]
+    if current_level not in niveles:
+        return niveles[0]
+    current_index = niveles.index(current_level)
+    target_index = current_index + step
+    if target_index < 0:
+        target_index = 0
+    if target_index >= len(niveles):
+        target_index = len(niveles) - 1
+    return niveles[target_index]
+
+
+def _render_dimension_tab(dimension: str) -> None:
+    _init_irl_state()
+    levels = LEVEL_DEFINITIONS.get(dimension, [])
+    counts = _compute_dimension_counts(dimension)
+
+    banner_msg = st.session_state[_BANNER_KEY].get(dimension)
+    banner_slot = st.empty()
+    if banner_msg:
+        if "Fuera de cálculo" in banner_msg:
+            banner_slot.warning(banner_msg)
         else:
-            break
-    return reached_level
+            banner_slot.error(banner_msg)
+
+    progreso = counts["completed"] / counts["total"] if counts["total"] else 0
+    st.markdown(
+        f"**{counts['completed']}/{counts['total']} completados · {counts['fuera']} fuera de cálculo · {counts['pending']} pendientes**"
+    )
+    st.progress(progreso)
+
+    for level in levels:
+        level_id = level["nivel"]
+        state = _level_state(dimension, level_id)
+        open_flag = st.session_state[_OPEN_KEY].get(dimension) == str(level_id)
+        status = state.get("estado", "Pendiente")
+        status_class = _status_class(status)
+
+        card_container = st.container()
+        with card_container:
+            st.markdown(
+                f"<div class='level-card level-card--{status_class}' id='{dimension}-{level_id}'>",
+                unsafe_allow_html=True,
+            )
+            header_cols = st.columns([4, 1])
+            with header_cols[0]:
+                st.markdown(
+                    f"<div class='level-card__title'>Nivel {level_id}</div><div class='level-card__description'>{escape(level['descripcion'])}</div>",
+                    unsafe_allow_html=True,
+                )
+            with header_cols[1]:
+                st.markdown(
+                    f"<span class='level-card__chip level-card__chip--{status_class}'>{status}</span>",
+                    unsafe_allow_html=True,
+                )
+                if st.button(
+                    "Responder",
+                    key=f"btn_open_{dimension}_{level_id}",
+                    type="secondary",
+                    use_container_width=True,
+                ):
+                    _go_to_level(dimension, level_id)
+                    st.session_state[_BANNER_KEY][dimension] = None
+                    st.experimental_rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with st.expander(
+            f"Detalles del nivel {level_id}",
+            expanded=open_flag,
+        ):
+            answer_key = f"resp_{dimension}_{level_id}"
+            evidencia_key = f"evid_{dimension}_{level_id}"
+            current_answer = state.get("respuesta")
+            current_answer_option = current_answer if current_answer in {"VERDADERO", "FALSO"} else "Sin respuesta"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = current_answer_option
+            if evidencia_key not in st.session_state:
+                st.session_state[evidencia_key] = state.get("evidencia", "")
+
+            with st.form(f"form_{dimension}_{level_id}", clear_on_submit=False):
+                st.markdown(
+                    f"<p class='level-card__intro'>{escape(level['descripcion'])}</p>",
+                    unsafe_allow_html=True,
+                )
+                if level.get("preguntas"):
+                    st.markdown("**Checklist sugerido:**")
+                    for pregunta in level["preguntas"]:
+                        st.markdown(f"- {pregunta}")
+
+                answer_selection = st.radio(
+                    "Responder",
+                    options=["Sin respuesta", "VERDADERO", "FALSO"],
+                    index=["Sin respuesta", "VERDADERO", "FALSO"].index(st.session_state[answer_key])
+                    if st.session_state[answer_key] in {"Sin respuesta", "VERDADERO", "FALSO"}
+                    else 0,
+                    key=answer_key,
+                    horizontal=True,
+                )
+                respuesta = answer_selection if answer_selection in {"VERDADERO", "FALSO"} else None
+
+                evidencia_texto = st.text_area(
+                    "Medio de verificación (texto)",
+                    value=st.session_state[evidencia_key],
+                    key=evidencia_key,
+                    placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
+                    height=160,
+                    max_chars=STEP_CONFIG["max_char_limit"],
+                )
+
+                contador = len(evidencia_texto.strip())
+                contador_html = (
+                    f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
+                    f"{contador}/{STEP_CONFIG['soft_char_limit']}"
+                    "</div>"
+                )
+                st.markdown(contador_html, unsafe_allow_html=True)
+
+                if evidencia_texto:
+                    palabras = len(re.findall(r"[\wÀ-ÿ]+", evidencia_texto))
+                    if contador < STEP_CONFIG["min_evidence_chars"] or palabras <= 5:
+                        st.info(
+                            "Incluye referencias concretas como entrevistas, métricas, acuerdos o documentos que respalden la evidencia."
+                        )
+
+                error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
+                if error_msg:
+                    st.error(error_msg)
+
+                col_guardar, col_siguiente, col_anterior, col_revision = st.columns(4)
+                guardar = col_guardar.form_submit_button("Guardar")
+                siguiente = col_siguiente.form_submit_button("Siguiente")
+                anterior = col_anterior.form_submit_button("Anterior")
+                revision = col_revision.form_submit_button("Marcar para revisión")
+
+            if revision:
+                _set_level_state(dimension, level_id, respuesta=respuesta, evidencia=evidencia_texto)
+                _toggle_revision(dimension, level_id)
+                st.session_state[_BANNER_KEY][dimension] = None
+                st.toast("Guardado")
+                st.experimental_rerun()
+
+            if guardar or siguiente or anterior:
+                success, error_message, banner = _handle_level_submission(
+                    dimension,
+                    level_id,
+                    respuesta,
+                    evidencia_texto,
+                )
+                st.session_state[_BANNER_KEY][dimension] = banner
+                if error_message:
+                    st.session_state[_ERROR_KEY][dimension][level_id] = error_message
+                else:
+                    st.session_state[_ERROR_KEY][dimension][level_id] = None
+                    _sync_dimension_score(dimension)
+                    st.toast("Guardado")
+                    if guardar or siguiente:
+                        target = _next_level_id(dimension, level_id, 1)
+                        _go_to_level(dimension, target)
+                    if anterior:
+                        target = _next_level_id(dimension, level_id, -1)
+                        _go_to_level(dimension, target)
+                    st.experimental_rerun()
+
+    st.divider()
+    st.markdown("#### Subsanar evidencias")
+    fuera_calculo = [
+        level
+        for level in levels
+        if _level_state(dimension, level["nivel"]).get("estado_auto") == "Fuera de cálculo"
+    ]
+    if fuera_calculo:
+        for level in fuera_calculo:
+            level_id = level["nivel"]
+            cols = st.columns([4, 1])
+            with cols[0]:
+                st.markdown(
+                    f"**Nivel {level_id}** · {level['descripcion']}"
+                )
+            with cols[1]:
+                if st.button(
+                    "Completar evidencia",
+                    key=f"btn_fix_{dimension}_{level_id}",
+                    use_container_width=True,
+                ):
+                    _go_to_level(dimension, level_id)
+                    st.session_state[_ERROR_KEY][dimension][level_id] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
+                    st.session_state[_BANNER_KEY][dimension] = "Para considerar esta respuesta en el cálculo, escribe el medio de verificación."
+                    st.experimental_rerun()
+    else:
+        st.caption("No hay niveles fuera de cálculo en esta pestaña.")
 
 
 def _collect_dimension_responses() -> pd.DataFrame:
@@ -556,257 +913,28 @@ def _collect_dimension_responses() -> pd.DataFrame:
     registros: list[dict] = []
 
     for dimension in dimensiones_ids:
-        nivel_base = st.session_state["irl_scores"].get(dimension, 0)
-        nivel = int(nivel_base) if isinstance(nivel_base, (int, float)) and nivel_base else None
-
+        niveles = LEVEL_DEFINITIONS.get(dimension, [])
         evidencias: list[str] = []
-        prefijo = f"irl_{dimension}_"
-        for key, value in st.session_state.items():
-            if not key.startswith(prefijo) or not key.endswith("_evidencia"):
-                continue
-            respuesta_key = key[:-10]
-            if st.session_state.get(respuesta_key) != "VERDADERO":
-                continue
-            if isinstance(value, str):
-                texto = value.strip()
-                if texto:
-                    evidencias.append(texto)
-
+        highest = 0
+        for level in niveles:
+            data = _level_state(dimension, level["nivel"])
+            if data.get("respuesta") == "VERDADERO" and data.get("en_calculo"):
+                highest = max(highest, level["nivel"])
+                evidencia_txt = (data.get("evidencia") or "").strip()
+                if evidencia_txt:
+                    evidencias.append(evidencia_txt)
+        st.session_state["irl_scores"][dimension] = highest
         registros.append(
             {
                 "dimension": dimension,
                 "etiqueta": etiquetas.get(dimension, dimension),
-                "nivel": nivel,
+                "nivel": highest if highest else None,
                 "evidencia": " · ".join(evidencias),
             }
         )
 
     return pd.DataFrame(registros)
 
-
-def _render_crl_tab():
-    _init_irl_state()
-    st.markdown("#### Calculadora de madurez del cliente (CRL)")
-    st.caption(
-        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
-    )
-    for level in CRL_LEVELS:
-        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
-        preguntas = level["preguntas"]
-        for idx, pregunta in enumerate(preguntas, start=1):
-            answer_key = f"irl_CRL_L{level['nivel']}_Q{idx}"
-            if answer_key not in st.session_state:
-                st.session_state[answer_key] = "FALSO"
-            respuesta = st.radio(
-                pregunta,
-                options=["FALSO", "VERDADERO"],
-                horizontal=True,
-                key=answer_key,
-            )
-            if respuesta == "VERDADERO":
-                evidence_key = f"{answer_key}_evidencia"
-                st.text_input(
-                    "Acredite el medio de verificación con que cuenta",
-                    key=evidence_key,
-                )
-        st.divider()
-
-    nivel_consecutivo = _compute_consecutive_level("CRL", CRL_LEVELS)
-    st.session_state["irl_scores"]["CRL"] = nivel_consecutivo
-    if nivel_consecutivo:
-        st.success(f"Nivel alcanzado: CRL {nivel_consecutivo}")
-    else:
-        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel CRL.")
-
-
-def _render_frl_tab():
-    _init_irl_state()
-    st.markdown("#### Calculadora de madurez financiera (FRL)")
-    st.caption(
-        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
-    )
-    for level in FRL_LEVELS:
-        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
-        preguntas = level["preguntas"]
-        for idx, pregunta in enumerate(preguntas, start=1):
-            answer_key = f"irl_FRL_L{level['nivel']}_Q{idx}"
-            if answer_key not in st.session_state:
-                st.session_state[answer_key] = "FALSO"
-            respuesta = st.radio(
-                pregunta,
-                options=["FALSO", "VERDADERO"],
-                horizontal=True,
-                key=answer_key,
-            )
-            if respuesta == "VERDADERO":
-                evidence_key = f"{answer_key}_evidencia"
-                st.text_input(
-                    "Acredite el medio de verificación con que cuenta",
-                    key=evidence_key,
-                )
-        st.divider()
-
-    nivel_consecutivo = _compute_consecutive_level("FRL", FRL_LEVELS)
-    st.session_state["irl_scores"]["FRL"] = nivel_consecutivo
-    if nivel_consecutivo:
-        st.success(f"Nivel alcanzado: FRL {nivel_consecutivo}")
-    else:
-        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel FRL.")
-
-
-def _render_brl_tab():
-    _init_irl_state()
-    st.markdown("#### Calculadora de madurez del negocio (BRL)")
-    st.caption(
-        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
-    )
-    for level in BRL_LEVELS:
-        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
-        preguntas = level["preguntas"]
-        for idx, pregunta in enumerate(preguntas, start=1):
-            answer_key = f"irl_BRL_L{level['nivel']}_Q{idx}"
-            if answer_key not in st.session_state:
-                st.session_state[answer_key] = "FALSO"
-            respuesta = st.radio(
-                pregunta,
-                options=["FALSO", "VERDADERO"],
-                horizontal=True,
-                key=answer_key,
-            )
-            if respuesta == "VERDADERO":
-                evidence_key = f"{answer_key}_evidencia"
-                st.text_input(
-                    "Acredite el medio de verificación con que cuenta",
-                    key=evidence_key,
-                )
-        st.divider()
-
-    nivel_consecutivo = _compute_consecutive_level("BRL", BRL_LEVELS)
-    st.session_state["irl_scores"]["BRL"] = nivel_consecutivo
-    if nivel_consecutivo:
-        st.success(f"Nivel alcanzado: BRL {nivel_consecutivo}")
-    else:
-        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel BRL.")
-
-
-def _render_trl_tab():
-    _init_irl_state()
-    st.markdown("#### Calculadora de madurez tecnológica (TRL)")
-    st.caption(
-        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
-    )
-    for level in TRL_LEVELS:
-        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
-        preguntas = level["preguntas"]
-        for idx, pregunta in enumerate(preguntas, start=1):
-            answer_key = f"irl_TRL_L{level['nivel']}_Q{idx}"
-            if answer_key not in st.session_state:
-                st.session_state[answer_key] = "FALSO"
-            respuesta = st.radio(
-                pregunta,
-                options=["FALSO", "VERDADERO"],
-                horizontal=True,
-                key=answer_key,
-            )
-            if respuesta == "VERDADERO":
-                evidence_key = f"{answer_key}_evidencia"
-                st.text_input(
-                    "Acredite el medio de verificación con que cuenta",
-                    key=evidence_key,
-                )
-        st.divider()
-
-    nivel_consecutivo = _compute_consecutive_level("TRL", TRL_LEVELS)
-    st.session_state["irl_scores"]["TRL"] = nivel_consecutivo
-    if nivel_consecutivo:
-        st.success(f"Nivel alcanzado: TRL {nivel_consecutivo}")
-    else:
-        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel TRL.")
-
-
-def _render_iprl_tab():
-    _init_irl_state()
-    st.markdown("#### Calculadora de madurez de propiedad intelectual (IPRL)")
-    st.caption(
-        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
-    )
-    for level in IPRL_LEVELS:
-        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
-        preguntas = level["preguntas"]
-        for idx, pregunta in enumerate(preguntas, start=1):
-            answer_key = f"irl_IPRL_L{level['nivel']}_Q{idx}"
-            if answer_key not in st.session_state:
-                st.session_state[answer_key] = "FALSO"
-            respuesta = st.radio(
-                pregunta,
-                options=["FALSO", "VERDADERO"],
-                horizontal=True,
-                key=answer_key,
-            )
-            if respuesta == "VERDADERO":
-                evidence_key = f"{answer_key}_evidencia"
-                st.text_input(
-                    "Acredite el medio de verificación con que cuenta",
-                    key=evidence_key,
-                )
-        st.divider()
-
-    nivel_consecutivo = _compute_consecutive_level("IPRL", IPRL_LEVELS)
-    st.session_state["irl_scores"]["IPRL"] = nivel_consecutivo
-    if nivel_consecutivo:
-        st.success(f"Nivel alcanzado: IPRL {nivel_consecutivo}")
-    else:
-        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel IPRL.")
-
-
-def _render_tmrl_tab():
-    _init_irl_state()
-    st.markdown("#### Calculadora de madurez del equipo (TmRL)")
-    st.caption(
-        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
-    )
-    for level in TMRL_LEVELS:
-        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
-        preguntas = level["preguntas"]
-        for idx, pregunta in enumerate(preguntas, start=1):
-            answer_key = f"irl_TmRL_L{level['nivel']}_Q{idx}"
-            if answer_key not in st.session_state:
-                st.session_state[answer_key] = "FALSO"
-            respuesta = st.radio(
-                pregunta,
-                options=["FALSO", "VERDADERO"],
-                horizontal=True,
-                key=answer_key,
-            )
-            if respuesta == "VERDADERO":
-                evidence_key = f"{answer_key}_evidencia"
-                st.text_input(
-                    "Acredite el medio de verificación con que cuenta",
-                    key=evidence_key,
-                )
-        st.divider()
-
-    nivel_consecutivo = _compute_consecutive_level("TmRL", TMRL_LEVELS)
-    st.session_state["irl_scores"]["TmRL"] = nivel_consecutivo
-    if nivel_consecutivo:
-        st.success(f"Nivel alcanzado: TmRL {nivel_consecutivo}")
-    else:
-        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel TmRL.")
-
-
-def _render_placeholder_tab(dimension: str):
-    _init_irl_state()
-    score_key = f"irl_manual_{dimension}"
-    default_value = int(st.session_state["irl_scores"].get(dimension, 0))
-    st.info("Define temporalmente el nivel de madurez mientras se agregan las preguntas específicas.")
-    nivel = st.slider(
-        f"Selecciona el nivel de {dimension}",
-        min_value=0,
-        max_value=9,
-        value=default_value,
-        key=score_key,
-    )
-    st.session_state["irl_scores"][dimension] = nivel
 
 
 st.set_page_config(page_title="Fase 1 - Evaluacion TRL", page_icon="🌲", layout="wide")
@@ -1106,6 +1234,154 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
     border-top: 1px solid rgba(var(--shadow-color), 0.12);
 }
 
+.irl-bubbles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.85rem;
+    margin: 1rem 0 1.4rem;
+}
+
+.irl-bubble {
+    border-radius: 18px;
+    padding: 0.85rem 1rem;
+    background: rgba(var(--forest-100), 0.72);
+    border: 1px solid rgba(var(--forest-500), 0.25);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.irl-bubble__label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--forest-800);
+}
+
+.irl-bubble__badge {
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.55px;
+}
+
+.irl-bubble small {
+    color: var(--text-500);
+    font-size: 0.75rem;
+}
+
+.irl-bubble--complete {
+    background: rgba(46, 142, 86, 0.18);
+    border-color: rgba(46, 142, 86, 0.45);
+}
+
+.irl-bubble--partial {
+    background: rgba(234, 185, 89, 0.22);
+    border-color: rgba(234, 185, 89, 0.45);
+}
+
+.irl-bubble--pending {
+    background: rgba(180, 196, 210, 0.25);
+    border-color: rgba(143, 162, 180, 0.42);
+}
+
+.level-card {
+    border-radius: 18px;
+    padding: 1rem 1.2rem;
+    border: 1px solid rgba(var(--shadow-color), 0.16);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 12px 28px rgba(var(--shadow-color), 0.18);
+    margin-bottom: 0.7rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.level-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 18px 36px rgba(var(--shadow-color), 0.22);
+}
+
+.level-card__title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--forest-800);
+}
+
+.level-card__description {
+    font-size: 0.9rem;
+    color: var(--text-600);
+    margin-top: 0.2rem;
+}
+
+.level-card__chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.level-card__chip--complete {
+    background: rgba(46, 142, 86, 0.18);
+    color: #1d5134;
+    border: 1px solid rgba(46, 142, 86, 0.4);
+}
+
+.level-card__chip--pending {
+    background: rgba(143, 162, 180, 0.25);
+    color: #2d3e50;
+    border: 1px solid rgba(143, 162, 180, 0.4);
+}
+
+.level-card__chip--out {
+    background: rgba(220, 120, 68, 0.2);
+    color: #70351a;
+    border: 1px solid rgba(220, 120, 68, 0.35);
+}
+
+.level-card__chip--review {
+    background: rgba(177, 131, 255, 0.22);
+    color: #452f77;
+    border: 1px solid rgba(177, 131, 255, 0.42);
+}
+
+.level-card button[kind="secondary"] {
+    border-radius: 999px;
+    border: 1px solid rgba(var(--forest-500), 0.25);
+    background: rgba(var(--forest-500), 0.12);
+    color: var(--forest-800);
+    font-weight: 600;
+    font-size: 0.78rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.level-card:hover button[kind="secondary"],
+.level-card button[kind="secondary"]:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.level-card button[kind="secondary"]:focus-visible {
+    outline: 2px solid var(--forest-600);
+    outline-offset: 2px;
+}
+
+.stepper-form__counter {
+    text-align: right;
+    font-size: 0.75rem;
+    color: var(--text-500);
+    margin-top: -0.4rem;
+}
+
+.stepper-form__counter--alert {
+    color: #a35a00;
+    font-weight: 600;
+}
+
 div[data-testid="stDataFrame"],
 div[data-testid="stDataEditor"] {
     border: 1px solid rgba(var(--shadow-color), 0.16);
@@ -1343,23 +1619,32 @@ with st.container():
         "Responde las preguntas de cada pestaña y acredita la evidencia para calcular automáticamente el nivel de madurez por dimensión."
     )
     _init_irl_state()
-    tabs = st.tabs([dimension for dimension, _ in IRL_DIMENSIONS])
-    for idx, (dimension, _) in enumerate(IRL_DIMENSIONS):
+    badge_data: list[tuple[str, str, dict]] = []
+    for dimension, _ in IRL_DIMENSIONS:
+        counts = _compute_dimension_counts(dimension)
+        badge = _dimension_badge(counts)
+        badge_data.append((dimension, badge, counts))
+
+    bubbles_html = "<div class='irl-bubbles'>"
+    for dimension, badge, counts in badge_data:
+        bubble_class = _dimension_badge_class(badge)
+        bubbles_html += (
+            "<div class='irl-bubble irl-bubble--"
+            + bubble_class
+            + "'>"
+            + f"<span class='irl-bubble__label'>{dimension}</span>"
+            + f"<strong class='irl-bubble__badge'>{badge}</strong>"
+            + f"<small>{counts['completed']}/{counts['total']} en cálculo</small>"
+            + "</div>"
+        )
+    bubbles_html += "</div>"
+    st.markdown(bubbles_html, unsafe_allow_html=True)
+
+    tab_labels = [f"{dimension} · {badge}" for dimension, badge, _ in badge_data]
+    tabs = st.tabs(tab_labels)
+    for idx, (dimension, _, _) in enumerate(badge_data):
         with tabs[idx]:
-            if dimension == "CRL":
-                _render_crl_tab()
-            elif dimension == "BRL":
-                _render_brl_tab()
-            elif dimension == "TRL":
-                _render_trl_tab()
-            elif dimension == "IPRL":
-                _render_iprl_tab()
-            elif dimension == "TmRL":
-                _render_tmrl_tab()
-            elif dimension == "FRL":
-                _render_frl_tab()
-            else:
-                _render_placeholder_tab(dimension)
+            _render_dimension_tab(dimension)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with st.container():
