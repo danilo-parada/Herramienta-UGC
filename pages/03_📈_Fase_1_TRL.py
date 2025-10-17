@@ -2291,26 +2291,7 @@ with st.container():
     df_respuestas = _collect_dimension_responses()
     detalles_dimensiones = _collect_dimension_details()
     with st.expander('Detalle de niveles por dimension', expanded=False):
-        if not df_respuestas.empty:
-            resumen_vista = pd.DataFrame(
-                [
-                    {
-                        "Dimensión": fila.get("etiqueta", fila.get("dimension")),
-                        "Nivel alcanzado": int(fila["nivel"]) if pd.notna(fila["nivel"]) else "—",
-                        "Evidencias acreditadas": fila.get("evidencia") or "—",
-                    }
-                    for _, fila in df_respuestas.iterrows()
-                ]
-            )
-
-            st.markdown("**Resumen general por dimensión**")
-            render_table(
-                resumen_vista,
-                key='fase1_detalle_dimensiones',
-                include_actions=False,
-                hide_index=True,
-            )
-        else:
+        if df_respuestas.empty:
             st.info("Aún no hay niveles respondidos en esta evaluación.")
 
         if detalles_dimensiones:
