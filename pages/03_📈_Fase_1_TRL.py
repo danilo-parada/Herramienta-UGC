@@ -750,25 +750,13 @@ def _has_pending_changes(
 
     if respuestas_actuales is not None:
         guardadas = level_state.get("respuestas_preguntas") or {}
-
-        def _normalize_respuestas(valores: dict[str, str | None]) -> dict[str, str]:
-            normalizadas: dict[str, str] = {}
-            for clave, valor in valores.items():
-                clave_str = str(clave)
-                if valor in {"VERDADERO", "FALSO"}:
-                    normalizadas[clave_str] = valor
-            return normalizadas
-
-        if _normalize_respuestas(guardadas) != _normalize_respuestas(respuestas_actuales):
+        if guardadas != respuestas_actuales:
             return True
     elif level_state.get("respuestas_preguntas"):
         return True
 
-    saved_manual = level_state.get("respuesta")
-    if respuesta_manual_actual in {"VERDADERO", "FALSO"}:
-        if saved_manual != respuesta_manual_actual:
-            return True
-    elif saved_manual in {"VERDADERO", "FALSO"} and respuesta_manual_actual not in {"VERDADERO", "FALSO"}:
+    if respuesta_manual_actual is not None:
+        if level_state.get("respuesta") != respuesta_manual_actual:
             return True
 
     saved_evidencias = level_state.get("evidencias_preguntas")
@@ -1050,20 +1038,15 @@ def _render_dimension_tab(dimension: str) -> None:
                     evidencias_dict_envio if preguntas else None,
                 )
 
-                if pending_changes:
-                    if ready_to_save:
-                        st.info("Presiona **Guardar** para registrar tu respuesta.")
-                    else:
-                        st.info(
-                            "Responde VERDADERO o FALSO en cada pregunta antes de guardar."
-                        )
+                if ready_to_save and pending_changes:
+                    st.info("Presiona **Guardar** para registrar tu respuesta.")
 
                 error_msg = st.session_state[_ERROR_KEY][dimension].get(level_id)
                 if error_msg:
                     st.error(error_msg)
 
                 col_guardar, col_revision = st.columns([2, 1])
-                guardar = col_guardar.form_submit_button("Guardar")
+                guardar = col_guardar.form_submit_button("Guardar", disabled=not ready_to_save)
                 revision = col_revision.form_submit_button("Marcar para revisión")
 
             if revision:
