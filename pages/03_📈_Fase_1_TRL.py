@@ -10,8 +10,8 @@ from core.db_trl import save_trl_result, get_trl_history
 from core.theme import load_theme
 
 IRL_DIMENSIONS = [
-    ("CRL", 6),
-    ("BRL", 5),
+    ("CRL", 0),
+    ("BRL", 0),
     ("TRL", 4),
     ("IPRL", 5),
     ("TmRL", 6),
@@ -94,6 +94,91 @@ CRL_LEVELS = [
     },
 ]
 
+BRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Hipótesis preliminar sobre el concepto de negocio con información limitada del mercado.",
+        "preguntas": [
+            "¿Tiene una hipótesis preliminar del concepto de negocio?",
+            "¿Cuenta con alguna información sobre el mercado y su potencial o tamaño?",
+            "¿Tiene algún conocimiento o percepción de la competencia y soluciones alternativas?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Descripción inicial estructurada del concepto de negocio y reconocimiento general del mercado.",
+        "preguntas": [
+            "¿Ha propuesto una descripción estructurada del concepto de negocio y la propuesta de valor?",
+            "¿Se ha familiarizado brevemente con el tamaño del mercado, los segmentos y el panorama competitivo?",
+            "¿Ha enumerado algunos competidores o alternativas?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Borrador de modelo de negocios que caracteriza el mercado potencial y el panorama competitivo.",
+        "preguntas": [
+            "¿Ha generado un borrador del modelo de negocios (Canvas)?",
+            "¿Ha descrito factores relevantes en el modelo de negocio que afectan al medio ambiente y la sociedad?",
+            "¿Ha definido el mercado objetivo y estimado su tamaño (TAM, SAM)?",
+            "¿Ha identificado y descrito la competencia y el panorama competitivo?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Modelo de negocios completo inicial con primeras proyecciones de viabilidad económica.",
+        "preguntas": [
+            "¿Ha determinado la viabilidad económica a partir de las primeras proyecciones de pérdidas y ganancias?",
+            "¿Ha realizado una evaluación inicial de la sostenibilidad ambiental y social?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Modelo de negocios ajustado tras feedback de mercado y primeras hipótesis de ingresos.",
+        "preguntas": [
+            "¿Ha recibido feedback sobre los ingresos del modelo comercial de clientes potenciales o expertos?",
+            "¿Ha recibido feedback sobre los costos del modelo comercial de socios, proveedores o expertos externos?",
+            "¿Ha identificado medidas para aumentar las contribuciones ambientales y sociales positivas y disminuir las negativas?",
+            "¿Ha actualizado la proyección de ganancias y pérdidas en función del feedback del mercado?",
+            "¿Ha actualizado la descripción del mercado objetivo y el análisis competitivo basado en comentarios del mercado?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Modelo de negocios sostenible validado mediante escenarios comerciales realistas.",
+        "preguntas": [
+            "¿Tiene un modelo de negocio sostenible probado en escenarios comerciales realistas (ventas de prueba, pedidos anticipados, pilotos, etc.)?",
+            "¿Tiene proyecciones financieras completas basadas en comentarios de casos comerciales realistas?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "Product/market fit inicial con disposición de pago demostrada y proyecciones validadas.",
+        "preguntas": [
+            "¿Las primeras ventas/ingresos en términos comerciales demuestran la disposición a pagar de un número significativo de clientes?",
+            "¿Existen proyecciones financieras completas validadas por primeras ventas/ingresos y datos?",
+            "¿Tiene acuerdos vigentes con proveedores clave, socios y socios de canal alineados con sus expectativas de sostenibilidad?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Modelo de negocios sostenible que demuestra capacidad de escalar con métricas operativas.",
+        "preguntas": [
+            "¿Las ventas y otras métricas de las operaciones comerciales iniciales muestran que el modelo de negocio sostenible se mantiene y puede escalar?",
+            "¿Están establecidos y operativos los canales de venta y la cadena de suministro alineados con sus expectativas de sostenibilidad?",
+            "¿El modelo comercial se ajusta para mejorar los ingresos/costos y aprovechar la sostenibilidad?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "Modelo de negocios definitivo y sostenible con ingresos recurrentes y métricas consolidadas.",
+        "preguntas": [
+            "¿El modelo de negocio es sostenible y operativo, y el negocio cumple o supera las expectativas internas y externas en cuanto a beneficios, crecimiento, escalabilidad e impacto ambiental y social?",
+            "¿Utiliza sistemas y métricas creíbles para rastrear el desempeño económico, ambiental y social?",
+            "¿Los datos históricos sobre el desempeño económico, ambiental y social prueban un negocio viable, rentable y sostenible en el tiempo?",
+        ],
+    },
+]
+
 def _init_irl_state():
     if "irl_scores" not in st.session_state:
         st.session_state["irl_scores"] = {dimension: default for dimension, default in IRL_DIMENSIONS}
@@ -151,6 +236,41 @@ def _render_crl_tab():
         st.success(f"Nivel alcanzado: CRL {nivel_consecutivo}")
     else:
         st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel CRL.")
+
+
+def _render_brl_tab():
+    _init_irl_state()
+    st.markdown("#### Calculadora de madurez del negocio (BRL)")
+    st.caption(
+        "Responde cada pregunta marcando VERDADERO cuando cuentes con evidencia. Al hacerlo se solicitará acreditar el medio de verificación."
+    )
+    for level in BRL_LEVELS:
+        st.markdown(f"### Nivel {level['nivel']} · {level['descripcion']}")
+        preguntas = level["preguntas"]
+        for idx, pregunta in enumerate(preguntas, start=1):
+            answer_key = f"irl_BRL_L{level['nivel']}_Q{idx}"
+            if answer_key not in st.session_state:
+                st.session_state[answer_key] = "FALSO"
+            respuesta = st.radio(
+                pregunta,
+                options=["FALSO", "VERDADERO"],
+                horizontal=True,
+                key=answer_key,
+            )
+            if respuesta == "VERDADERO":
+                evidence_key = f"{answer_key}_evidencia"
+                st.text_input(
+                    "Acredite el medio de verificación con que cuenta",
+                    key=evidence_key,
+                )
+        st.divider()
+
+    nivel_consecutivo = _compute_consecutive_level("BRL", BRL_LEVELS)
+    st.session_state["irl_scores"]["BRL"] = nivel_consecutivo
+    if nivel_consecutivo:
+        st.success(f"Nivel alcanzado: BRL {nivel_consecutivo}")
+    else:
+        st.info("Marca las evidencias de forma consecutiva para avanzar en el nivel BRL.")
 
 
 def _render_placeholder_tab(dimension: str):
@@ -520,6 +640,8 @@ with st.container():
         with tabs[idx]:
             if dimension == "CRL":
                 _render_crl_tab()
+            elif dimension == "BRL":
+                _render_brl_tab()
             else:
                 _render_placeholder_tab(dimension)
     st.markdown("</div>", unsafe_allow_html=True)
