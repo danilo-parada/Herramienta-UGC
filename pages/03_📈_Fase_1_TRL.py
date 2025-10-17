@@ -1015,26 +1015,31 @@ def _render_dimension_tab(dimension: str) -> None:
                                 label_visibility="collapsed",
                             )
 
-                        evidencia_texto = st.text_area(
-                            "Medio de verificación (texto)",
-                            value=st.session_state[evidencia_pregunta_key],
-                            key=evidencia_pregunta_key,
-                            placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
-                            height=100,
-                            max_chars=STEP_CONFIG["max_char_limit"],
-                        )
-                        if requiere_evidencia and not evidencia_valida:
+                        evidencia_texto = ""
+                        if requiere_evidencia:
+                            evidencia_texto = st.text_area(
+                                "Medio de verificación (texto)",
+                                value=st.session_state[evidencia_pregunta_key],
+                                key=evidencia_pregunta_key,
+                                placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
+                                height=100,
+                                max_chars=STEP_CONFIG["max_char_limit"],
+                            )
+                            contador = len(_clean_text(evidencia_texto))
+                            contador_html = (
+                                f"<div class='question-block__counter{' question-block__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
+                                f"{contador}/{STEP_CONFIG['soft_char_limit']}"
+                                "</div>"
+                            )
+                            st.markdown(contador_html, unsafe_allow_html=True)
+                        else:
+                            st.session_state[evidencia_pregunta_key] = ""
+
+                        if requiere_evidencia and not _is_evidence_valid(st.session_state[evidencia_pregunta_key]):
                             st.markdown(
                                 "<div class='question-block__error'>Escribe el medio de verificación para guardar como VERDADERO.</div>",
                                 unsafe_allow_html=True,
                             )
-                        contador = len(_clean_text(evidencia_texto))
-                        contador_html = (
-                            f"<div class='question-block__counter{' question-block__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
-                            f"{contador}/{STEP_CONFIG['soft_char_limit']}"
-                            "</div>"
-                        )
-                        st.markdown(contador_html, unsafe_allow_html=True)
 
                         st.markdown("</div>", unsafe_allow_html=True)
                 else:
@@ -1056,22 +1061,26 @@ def _render_dimension_tab(dimension: str) -> None:
                     )
                     st.session_state[evidencia_key] = evidencia_texto
                 else:
-                    evidencia_texto = st.text_area(
-                        "Medio de verificación (texto)",
-                        value=st.session_state[evidencia_key],
-                        key=evidencia_key,
-                        placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
-                        height=110,
-                        max_chars=STEP_CONFIG["max_char_limit"],
-                    )
+                    respuesta_manual_actual = st.session_state.get(answer_key, "FALSO")
+                    if respuesta_manual_actual == "VERDADERO":
+                        evidencia_texto = st.text_area(
+                            "Medio de verificación (texto)",
+                            value=st.session_state[evidencia_key],
+                            key=evidencia_key,
+                            placeholder="Describe brevemente la evidencia que respalda esta afirmación…",
+                            height=110,
+                            max_chars=STEP_CONFIG["max_char_limit"],
+                        )
 
-                    contador = len(_clean_text(evidencia_texto))
-                    contador_html = (
-                        f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
-                        f"{contador}/{STEP_CONFIG['soft_char_limit']}"
-                        "</div>"
-                    )
-                    st.markdown(contador_html, unsafe_allow_html=True)
+                        contador = len(_clean_text(evidencia_texto))
+                        contador_html = (
+                            f"<div class='stepper-form__counter{' stepper-form__counter--alert' if contador > STEP_CONFIG['soft_char_limit'] else ''}'>"
+                            f"{contador}/{STEP_CONFIG['soft_char_limit']}"
+                            "</div>"
+                        )
+                        st.markdown(contador_html, unsafe_allow_html=True)
+                    else:
+                        st.session_state[evidencia_key] = ""
 
                 respuestas_dict = {
                     idx_str: (
