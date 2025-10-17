@@ -1,4 +1,4 @@
-﻿from io import BytesIO
+from io import BytesIO
 
 
 
@@ -340,6 +340,82 @@ h1, h2, h3 { font-weight: 700; letter-spacing: 0.25px; }
     margin: 0;
     font-size: 0.86rem;
     color: var(--text-500);
+}
+
+div[data-testid="stExpander"] {
+    margin-bottom: 1.5rem;
+}
+
+div[data-testid="stExpander"] > details {
+    border-radius: 22px;
+    border: 1px solid rgba(var(--shadow-color), 0.16);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.98), rgba(241, 234, 223, 0.92));
+    box-shadow: 0 26px 52px rgba(var(--shadow-color), 0.18);
+    overflow: hidden;
+}
+
+div[data-testid="stExpander"] > details > summary {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--forest-700);
+    padding: 1rem 1.4rem;
+    list-style: none;
+    position: relative;
+}
+
+div[data-testid="stExpander"] > details > summary::before {
+    content: "➕";
+    margin-right: 0.65rem;
+    color: var(--forest-600);
+    font-size: 1rem;
+}
+
+div[data-testid="stExpander"] > details[open] > summary::before {
+    content: "➖";
+}
+
+div[data-testid="stExpander"] > details[open] > summary {
+    background: rgba(var(--forest-500), 0.14);
+    color: var(--forest-800);
+}
+
+div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
+    padding: 1.2rem 1.5rem 1.5rem;
+    background: #ffffff;
+    border-top: 1px solid rgba(var(--shadow-color), 0.12);
+}
+
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"] {
+    border: 1px solid rgba(var(--shadow-color), 0.16);
+    border-radius: 22px;
+    overflow: hidden;
+    box-shadow: 0 22px 44px rgba(var(--shadow-color), 0.18);
+    background: #ffffff;
+}
+
+div[data-testid="stDataFrame"] div[role="columnheader"],
+div[data-testid="stDataEditor"] div[role="columnheader"] {
+    background: rgba(var(--forest-500), 0.16) !important;
+    color: var(--forest-900) !important;
+    font-weight: 700;
+    font-size: 0.92rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+div[data-testid="stDataFrame"] div[role="gridcell"],
+div[data-testid="stDataEditor"] div[role="gridcell"] {
+    color: var(--text-700);
+    font-size: 0.92rem;
+}
+
+div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
+    background: rgba(var(--linen-200), 0.55);
+}
+
+div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
+    background: rgba(255, 255, 255, 0.75);
 }
 </style>
 """
@@ -3050,25 +3126,18 @@ else:
 
 
 display_df = portafolio_df.drop(columns=RESULT_COLUMNS, errors='ignore')
-st.markdown('<div class="data-editor">', unsafe_allow_html=True)
-st.markdown('#### Planilla de proyectos (edicion manual)')
-st.caption('Edita la informacion base del portafolio. Los campos de resultado se recalculan cuando vuelves a evaluar.')
-portafolio_editado = st.data_editor(
-    display_df,
-    num_rows='dynamic',
-    hide_index=True,
-    use_container_width=True,
-    column_config=_portafolio_column_config(score_tables),
-    key='editor_portafolio',
-)
-
-
-
-
-
-
-
-st.markdown('</div>', unsafe_allow_html=True)
+with st.expander('Planilla de proyectos (edicion manual)', expanded=False):
+    st.caption('Edita la informacion base del portafolio. Los campos de resultado se recalculan cuando vuelves a evaluar.')
+    st.markdown('<div class="data-editor">', unsafe_allow_html=True)
+    portafolio_editado = st.data_editor(
+        display_df,
+        num_rows='dynamic',
+        hide_index=True,
+        use_container_width=True,
+        column_config=_portafolio_column_config(score_tables),
+        key='editor_portafolio',
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 
@@ -3533,74 +3602,38 @@ if resultado is not None and not resultado.empty:
 
     styled = resultado.style.format({'evaluacion_calculada': '{:.1f}'})
 
-
-
-
-
-
-
     styled = styled.apply(lambda row: ['background-color: #cfeedd' if row.name < 3 else '' for _ in row], axis=1)
 
+    with st.expander('Ranking de candidatos priorizados', expanded=False):
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
+        if HAS_OPENPYXL:
+            eval_buffer = BytesIO()
 
+            with pd.ExcelWriter(eval_buffer, engine='openpyxl') as writer:
+                resultado.to_excel(writer, index=False, sheet_name='Evaluacion')
 
+                resumen_df = pd.DataFrame([
+                    {'Indicador': 'Total proyectos', 'Valor': total},
+                    {'Indicador': 'Candidatos >= prioridad media', 'Valor': candidatos_media},
+                    {'Indicador': 'Puntaje maximo', 'Valor': f"{resultado['evaluacion_calculada'].max():.1f}"},
+                    {'Indicador': 'Puntaje promedio', 'Valor': f"{resultado['evaluacion_calculada'].mean():.1f}"},
+                    {'Indicador': 'Umbral prioridad baja', 'Valor': umbrales['baja']},
+                    {'Indicador': 'Umbral prioridad media', 'Valor': umbrales['media']},
+                    {'Indicador': 'Umbral prioridad alta', 'Valor': umbrales['alta']},
+                ])
 
+                resumen_df.to_excel(writer, index=False, sheet_name='Resumen')
 
-
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    if HAS_OPENPYXL:
-
-        eval_buffer = BytesIO()
-
-        with pd.ExcelWriter(eval_buffer, engine='openpyxl') as writer:
-
-            resultado.to_excel(writer, index=False, sheet_name='Evaluacion')
-
-            resumen_df = pd.DataFrame([
-                {'Indicador': 'Total proyectos', 'Valor': total},
-                {'Indicador': 'Candidatos >= prioridad media', 'Valor': candidatos_media},
-                {'Indicador': 'Puntaje maximo', 'Valor': f"{resultado['evaluacion_calculada'].max():.1f}"},
-                {'Indicador': 'Puntaje promedio', 'Valor': f"{resultado['evaluacion_calculada'].mean():.1f}"},
-                {'Indicador': 'Umbral prioridad baja', 'Valor': umbrales['baja']},
-                {'Indicador': 'Umbral prioridad media', 'Valor': umbrales['media']},
-                {'Indicador': 'Umbral prioridad alta', 'Valor': umbrales['alta']},
-            ])
-
-            resumen_df.to_excel(writer, index=False, sheet_name='Resumen')
-
-        st.download_button(
-
-            'Descargar evaluacion (Excel)',
-
-            data=eval_buffer.getvalue(),
-
-            file_name='evaluacion_fase0.xlsx',
-
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-
-            key='download_eval',
-
-        )
-
-    else:
-
-        st.info('Instala openpyxl para exportar la evaluacion en Excel.')
-
+            st.download_button(
+                'Descargar evaluacion (Excel)',
+                data=eval_buffer.getvalue(),
+                file_name='evaluacion_fase0.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                key='download_eval',
+            )
+        else:
+            st.info('Instala openpyxl para exportar la evaluacion en Excel.')
 
 
 
