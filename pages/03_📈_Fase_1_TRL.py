@@ -888,6 +888,8 @@ def _handle_level_submission(
         evidencias_preguntas=evidencias_normalizadas,
     )
 
+    banner_msg: str | None = None
+
     if preguntas:
         faltantes = _missing_required_evidences(level_data, normalizado, evidencias_normalizadas)
         if faltantes:
@@ -896,21 +898,48 @@ def _handle_level_submission(
             return False, mensaje, mensaje
         if any(valor is None for valor in normalizado.values()):
             mensaje = "Responde VERDADERO o FALSO para cada pregunta."
-            _set_level_state(dimension, level_id, respuesta=None, estado_auto="Pendiente", en_calculo=False)
+            _set_level_state(
+                dimension,
+                level_id,
+                respuesta=None,
+                estado_auto="Pendiente",
+                en_calculo=False,
+            )
             return False, mensaje, mensaje
         respuesta = _aggregate_question_status(normalizado)
         if respuesta is None:
             mensaje = "Responde VERDADERO o FALSO para cada pregunta."
-            _set_level_state(dimension, level_id, respuesta=None, estado_auto="Pendiente", en_calculo=False)
+            _set_level_state(
+                dimension,
+                level_id,
+                respuesta=None,
+                estado_auto="Pendiente",
+                en_calculo=False,
+            )
             return False, mensaje, mensaje
+        if faltantes:
+            faltantes_str = ", ".join(str(idx) for idx in faltantes)
+            banner_msg = (
+                "Puedes añadir medios de verificación para las preguntas VERDADERO "
+                f"({faltantes_str}) cuando quieras reforzar tu registro."
+            )
     else:
         if respuesta_manual not in {"VERDADERO", "FALSO"}:
             mensaje = "Selecciona VERDADERO o FALSO para continuar."
-            _set_level_state(dimension, level_id, respuesta=None, estado_auto="Pendiente", en_calculo=False)
+            _set_level_state(
+                dimension,
+                level_id,
+                respuesta=None,
+                estado_auto="Pendiente",
+                en_calculo=False,
+            )
             return False, mensaje, mensaje
         respuesta = respuesta_manual
+        if respuesta == "VERDADERO" and not evidencia:
+            banner_msg = (
+                "Puedes adjuntar un medio de verificación en este nivel en cualquier momento desde el mismo panel."
+            )
 
-    palabra_count = len(re.findall(r"[\wÀ-ÿ]+", evidencia)) if evidencia else 0
     _set_level_state(dimension, level_id, respuesta=respuesta)
 
     if respuesta == "VERDADERO":
