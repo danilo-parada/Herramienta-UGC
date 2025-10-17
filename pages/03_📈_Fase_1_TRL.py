@@ -1117,22 +1117,24 @@ div[data-testid="stDataEditor"] {
 
 div[data-testid="stDataFrame"] div[role="columnheader"],
 div[data-testid="stDataEditor"] div[role="columnheader"] {
-    background: linear-gradient(120deg, rgba(var(--forest-500), 0.28), rgba(var(--forest-500), 0.18)) !important;
-    color: var(--forest-900) !important;
+    background: linear-gradient(135deg, var(--forest-700), var(--forest-500)) !important;
+    color: #ffffff !important;
     font-weight: 700;
     font-size: 0.92rem;
     text-transform: uppercase;
     letter-spacing: 0.4px;
-    border-bottom: 1px solid rgba(var(--shadow-color), 0.14);
-    box-shadow: inset 0 -1px 0 rgba(var(--shadow-color), 0.08);
+    border-bottom: 2px solid rgba(12, 32, 20, 0.22);
+    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.14);
 }
 
 div[data-testid="stDataFrame"] div[role="gridcell"],
 div[data-testid="stDataEditor"] div[role="gridcell"] {
     color: var(--text-700);
     font-size: 0.92rem;
-    border-bottom: 1px solid rgba(var(--shadow-color), 0.08);
+    border-bottom: 1px solid rgba(var(--forest-700), 0.14);
+    border-right: 1px solid rgba(var(--forest-700), 0.1);
     padding: 0.55rem 0.75rem;
+    background: rgba(255, 255, 255, 0.92);
 }
 
 div[data-testid="stDataFrame"] div[role="row"],
@@ -1142,18 +1144,18 @@ div[data-testid="stDataEditor"] div[role="row"] {
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"],
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"] {
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.98);
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(even) div[role="row"],
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
-    background: rgba(var(--linen-200), 0.65);
+    background: rgba(199, 217, 182, 0.32);
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover,
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div div[role="row"]:hover {
-    background: rgba(var(--forest-200), 0.32);
-    box-shadow: inset 0 0 0 1px rgba(var(--forest-500), 0.35);
+    background: rgba(63, 129, 68, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(12, 32, 20, 0.2);
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover div[role="gridcell"],
