@@ -635,17 +635,31 @@ def _init_irl_state() -> None:
                 valor = evidencias_existentes.get(clave)
                 normalizado_evidencias[clave] = str(valor) if valor is not None else ""
             state["evidencias_preguntas"] = normalizado_evidencias
+            guardadas_existentes = state.get("preguntas_guardadas")
+            if not isinstance(guardadas_existentes, dict):
+                guardadas_existentes = {}
+            for idx, _ in enumerate(preguntas, start=1):
+                clave = str(idx)
+                if clave in guardadas_existentes:
+                    guardadas_existentes[clave] = bool(guardadas_existentes.get(clave))
+                else:
+                    guardadas_existentes[clave] = bool(state.get("en_calculo"))
+            state["preguntas_guardadas"] = guardadas_existentes
+            if not preguntas:
+                state["respuesta_guardada"] = bool(
+                    state.get("respuesta_guardada", state.get("en_calculo", False))
+                )
             st.session_state[_STATE_KEY][dimension][level["nivel"]] = state
-    if _READY_KEY not in st.session_state:
-        st.session_state[_READY_KEY] = {dimension: {} for dimension in STEP_TABS}
+    if _EDIT_MODE_KEY not in st.session_state:
+        st.session_state[_EDIT_MODE_KEY] = {}
     for dimension in STEP_TABS:
+        if dimension not in st.session_state[_EDIT_MODE_KEY]:
+            st.session_state[_EDIT_MODE_KEY][dimension] = {}
         for level in LEVEL_DEFINITIONS.get(dimension, []):
-            preguntas = level.get("preguntas") or []
-            level_state = st.session_state[_STATE_KEY][dimension][level["nivel"]]
-            if preguntas:
-                listo = all(
-                    level_state.get("respuestas_preguntas", {}).get(str(idx)) in {"VERDADERO", "FALSO"}
-                    for idx in range(1, len(preguntas) + 1)
+            level_id = level["nivel"]
+            if level_id not in st.session_state[_EDIT_MODE_KEY][dimension]:
+                en_calculo = bool(
+                    st.session_state[_STATE_KEY][dimension][level_id].get("en_calculo", False)
                 )
             else:
                 listo = level_state.get("respuesta") in {"VERDADERO", "FALSO"}
@@ -676,40 +690,6 @@ def _level_state(dimension: str, level_id: int) -> dict:
     return st.session_state[_STATE_KEY][dimension][level_id]
 
 
-def _update_ready_flag(dimension: str, level_id: int) -> None:
-    _init_irl_state()
-    niveles = LEVEL_DEFINITIONS.get(dimension, [])
-    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
-    if not level_data:
-        return
-    preguntas = level_data.get("preguntas") or []
-    if preguntas:
-        listo = True
-        for idx in range(1, len(preguntas) + 1):
-            pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
-            valor = st.session_state.get(pregunta_key)
-            if valor not in {"VERDADERO", "FALSO"}:
-                listo = False
-                break
-        if listo:
-            for idx in range(1, len(preguntas) + 1):
-                pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
-                evidencia_key = f"evid_{dimension}_{level_id}_{idx}"
-                if st.session_state.get(pregunta_key) == "VERDADERO" and not _is_evidence_valid(
-                    st.session_state.get(evidencia_key)
-                ):
-                    listo = False
-                    break
-    else:
-        answer_key = f"resp_{dimension}_{level_id}"
-        valor = st.session_state.get(answer_key)
-        listo = valor in {"VERDADERO", "FALSO"}
-        if listo and valor == "VERDADERO":
-            evidencia_key = f"evid_{dimension}_{level_id}"
-            listo = _is_evidence_valid(st.session_state.get(evidencia_key))
-    st.session_state[_READY_KEY][dimension][level_id] = listo
-
-
 def _set_level_state(
     dimension: str,
     level_id: int,
@@ -718,6 +698,8 @@ def _set_level_state(
     respuestas_preguntas: dict[str, str | None] | None = None,
     evidencia: str | None = None,
     evidencias_preguntas: dict[str, str] | None = None,
+    preguntas_guardadas: dict[str, bool] | None = None,
+    respuesta_guardada: bool | None = None,
     estado_auto: str | None = None,
     en_calculo: bool | None = None,
 ) -> None:
@@ -730,6 +712,10 @@ def _set_level_state(
         state["evidencia"] = evidencia
     if evidencias_preguntas is not None:
         state["evidencias_preguntas"] = evidencias_preguntas
+    if preguntas_guardadas is not None:
+        state["preguntas_guardadas"] = preguntas_guardadas
+    if respuesta_guardada is not None:
+        state["respuesta_guardada"] = respuesta_guardada
     if estado_auto is not None:
         state["estado_auto"] = estado_auto
     if en_calculo is not None:
@@ -979,7 +965,7 @@ def _render_dimension_tab(dimension: str) -> None:
             expander_label,
             expanded=expanded,
         ):
-            preguntas = level.get("preguntas") or []
+            preguntas = preguntas_actuales
             answer_key = f"resp_{dimension}_{level_id}"
             evidencia_key = f"evid_{dimension}_{level_id}"
             evidencias_preguntas_state = state.get("evidencias_preguntas") or {}
@@ -987,14 +973,10 @@ def _render_dimension_tab(dimension: str) -> None:
                 st.session_state[evidencia_key] = state.get("evidencia", "")
 
             existentes = state.get("respuestas_preguntas") or {}
-            question_keys: list[tuple[str, str]] = []
-            evidencia_question_keys: list[tuple[str, str]] = []
             for idx, _ in enumerate(preguntas, start=1):
                 idx_str = str(idx)
                 pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
                 evidencia_pregunta_key = f"evid_{dimension}_{level_id}_{idx}"
-                question_keys.append((idx_str, pregunta_key))
-                evidencia_question_keys.append((idx_str, evidencia_pregunta_key))
                 if pregunta_key not in st.session_state:
                     default_option = existentes.get(idx_str)
                     st.session_state[pregunta_key] = (
@@ -1009,11 +991,8 @@ def _render_dimension_tab(dimension: str) -> None:
                 if answer_key not in st.session_state:
                     st.session_state[answer_key] = current_option
 
-            respuestas_dict: dict[str, str | None] = {}
-            evidencias_dict_envio: dict[str, str] | None = None
-            respuesta_manual: str | None = None
-            normalizado_actual: dict[str, str | None] | None = None
-            ready_to_save = False
+            preguntas_guardadas_state = dict(state.get("preguntas_guardadas") or {})
+            respuesta_guardada_state = bool(state.get("respuesta_guardada", False))
 
             with st.form(f"form_{dimension}_{level_id}", clear_on_submit=False):
                 st.markdown(
@@ -1029,18 +1008,23 @@ def _render_dimension_tab(dimension: str) -> None:
 
                 if preguntas:
                     st.markdown("**Evalúa cada pregunta:**")
+                    respuestas_guardadas = dict(state.get("respuestas_preguntas") or {})
+                    evidencias_guardadas = dict(state.get("evidencias_preguntas") or {})
                     for idx, pregunta in enumerate(preguntas, start=1):
+                        idx_str = str(idx)
                         pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
                         evidencia_pregunta_key = f"evid_{dimension}_{level_id}_{idx}"
+                        question_saved = bool(preguntas_guardadas_state.get(idx_str))
                         respuesta_actual = st.session_state.get(pregunta_key, "FALSO")
-                        evidencia_actual = st.session_state.get(evidencia_pregunta_key, "")
                         requiere_evidencia = respuesta_actual == "VERDADERO"
+                        if not requiere_evidencia:
+                            st.session_state[evidencia_pregunta_key] = ""
+                        evidencia_actual = st.session_state.get(evidencia_pregunta_key, "")
                         evidencia_valida = _is_evidence_valid(evidencia_actual)
                         bloque_clases = ["question-block"]
-                        if respuesta_actual in {"VERDADERO", "FALSO"} and (
-                            not requiere_evidencia or evidencia_valida
-                        ):
+                        if question_saved:
                             bloque_clases.append("question-block--complete")
+                            bloque_clases.append("question-block--locked")
                         else:
                             bloque_clases.append("question-block--pending")
                         if locked:
@@ -1110,6 +1094,7 @@ def _render_dimension_tab(dimension: str) -> None:
 
                         st.markdown("</div>", unsafe_allow_html=True)
                 else:
+                    respuesta_actual = st.session_state.get(answer_key, "FALSO")
                     st.radio(
                         "Responder",
                         options=["VERDADERO", "FALSO"],
@@ -1150,35 +1135,9 @@ def _render_dimension_tab(dimension: str) -> None:
                     else:
                         st.session_state[evidencia_key] = ""
 
-                respuestas_dict = {
-                    idx_str: (
-                        st.session_state.get(key)
-                        if st.session_state.get(key) in {"VERDADERO", "FALSO"}
-                        else None
+                    ready_manual = respuesta_actual in {"VERDADERO", "FALSO"} and (
+                        respuesta_actual == "FALSO" or _is_evidence_valid(st.session_state[evidencia_key])
                     )
-                    for idx_str, key in question_keys
-                }
-
-                if preguntas:
-                    normalizado_actual = _normalize_question_responses(level, respuestas_dict)
-                    ready_to_save = True
-                    for idx_str, valor in normalizado_actual.items():
-                        if valor not in {"VERDADERO", "FALSO"}:
-                            ready_to_save = False
-                            break
-                        if valor == "VERDADERO" and not _is_evidence_valid(
-                            evidencias_dict_envio.get(idx_str)
-                        ):
-                            ready_to_save = False
-                            break
-                else:
-                    valor_manual = st.session_state.get(answer_key)
-                    if valor_manual in {"VERDADERO", "FALSO"}:
-                        respuesta_manual = valor_manual
-                    ready_to_save = respuesta_manual is not None
-                    if respuesta_manual == "VERDADERO":
-                        if not _is_evidence_valid(evidencia_texto):
-                            ready_to_save = False
 
                 st.session_state[_READY_KEY][dimension][level_id] = ready_to_save
 
