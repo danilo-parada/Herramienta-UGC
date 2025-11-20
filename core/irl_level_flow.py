@@ -501,26 +501,31 @@ def render_question(
     answer_key = question.answer_key
     value_key = question.value_key
 
-    # Inicializar valor desde session_state (ya normalizado por init_state)
-    initial_value = bool(st.session_state.get(value_key, False))
+    # Render a clear VERDADERO / FALSO selector while using the boolean
+    # `value_key` as the widget key. We format the boolean values to
+    # show human-readable labels but keep the widget-owned key as the
+    # source of truth for the boolean state.
+    def _format_bool(v: bool) -> str:
+        return "VERDADERO" if v else "FALSO"
 
-    # Usamos checkbox (más estándar) para una interacción rápida y predecible
-    checkbox_value = st.checkbox(
-        label=question.text,
+    # Ensure default exists (safe to set before creating widget)
+    if value_key not in st.session_state:
+        st.session_state[value_key] = False
+
+    selected_bool = st.radio(
+        "",
+        options=[True, False],
         key=value_key,
-        value=initial_value,
+        format_func=_format_bool,
+        horizontal=True,
         disabled=disabled,
         label_visibility="collapsed",
     )
 
-    # Sincronizar la representación textual (answer_key) cuando cambie
-    if checkbox_value != (st.session_state.get(answer_key) == "VERDADERO" if answer_key else checkbox_value):
-        # Actualizamos el estado booleano en session_state (checkbox ya lo hizo)
-        st.session_state[value_key] = bool(checkbox_value)
-        if answer_key:
-            st.session_state[answer_key] = "VERDADERO" if checkbox_value else "FALSO"
-
-    toggle_value = checkbox_value
+    # Update textual answer (separate key) from the widget-owned boolean.
+    toggle_value = bool(st.session_state.get(value_key))
+    if answer_key:
+        st.session_state[answer_key] = "VERDADERO" if toggle_value else "FALSO"
 
     # Estado visual
     state_class = "is-true" if toggle_value else "is-false"

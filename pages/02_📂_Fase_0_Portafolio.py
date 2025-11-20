@@ -2305,18 +2305,11 @@ def generar_recomendacion(row, puntaje, tablas):
 
 fase1_page = next(Path('pages').glob('03_*_Fase_1_IRL.py'), None)
 
-
-
-
-
-
-
-
-
-
-
-
-
+# Inicializar session_state para portafolio si no existe
+if 'portafolio' not in st.session_state:
+    st.session_state.portafolio = None
+if 'portafolio_loaded_at' not in st.session_state:
+    st.session_state.portafolio_loaded_at = None
 
 
 st.title('Fase 0 - Portafolio y filtro inicial')
@@ -2329,19 +2322,20 @@ st.title('Fase 0 - Portafolio y filtro inicial')
 
 st.caption('Carga, normaliza y evalua iniciativas antes de avanzar a la radiografia IRL.')
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+# Indicador de estado
+col_status1, col_status2, col_status3 = st.columns(3)
+with col_status1:
+    if st.session_state.portafolio is not None and len(st.session_state.portafolio) > 0:
+        st.success(f"🟢 **{len(st.session_state.portafolio)} proyectos** cargados")
+    else:
+        st.info("⚪ **Sin datos** - Descarga la plantilla para empezar")
+with col_status2:
+    if st.session_state.portafolio_loaded_at is not None:
+        st.caption(f"📅 Última carga: {st.session_state.portafolio_loaded_at}")
+    else:
+        st.caption("📅 Sin historial de carga")
+with col_status3:
+    st.caption("💡 Tip: Usa 'Anexar' para agregar proyectos sin borrar los existentes")
 
 st.divider()
 
@@ -2391,433 +2385,145 @@ score_tables = st.session_state['score_tables']
 
 
 
-with st.expander('Configurar tablas de puntaje', expanded=False):
-
-
-
-
-
-
-
-    st.markdown(
-
-
-
-
-
-
-
-        'Puntaje = Estatus + Impacto + Estado PM + Activo PM + Potencial transferencia + Responsable IN + Bono plazo. '
-
-
-
-
-
-
-
-        'El bono es 10 si la fecha de termino declarada sigue vigente.'
-
-
-
-
-
-
-
-    )
-
-
-
-
-
-
-
-    cols_top = st.columns(3)
-
-
-
-
-
-
-
-    cols_bottom = st.columns(3)
-
-
-
-
-
-
-
-    pairs = [
-
-
-
-
-
-
-
-        ('estatus', 'Estatus'),
-
-
-
-
-
-
-
-        ('impacto', 'Impacto'),
-
-
-
-
-
-
-
-        ('estado_pm', 'Estado PM'),
-
-
-
-
-
-
-
-        ('activo_pm', 'Activo PM'),
-
-
-
-
-
-
-
-        ('potencial_transferencia', 'Potencial transferencia'),
-
-
-
-
-
-
-
-        ('tiene_resp_in', 'Tiene Resp IN'),
-
-
-
-
-
-
-
-    ]
-
-
-
-
-
-
-
-    for idx, (key, label) in enumerate(pairs):
-
-
-
-
-
-
-
-        target = cols_top[idx] if idx < 3 else cols_bottom[idx - 3]
-
-
-
-
-
-
-
-        with target:
-
-
-
-
-
-
-
-            st.markdown(f'**{label}**')
-
-
-
-
-
-
-
-            score_tables[key] = st.data_editor(
-
-
-
-
-
-
-
-                score_tables[key],
-
-
-
-
-
-
-
+with st.expander('⚙️ Configurar tablas de puntaje', expanded=False):
+    st.info('💡 **Fórmula de puntaje:** Estatus + Impacto + Estado PM + Activo PM + Potencial transferencia + Responsable IN + Bono plazo (10 pts si fecha vigente)')
+    
+    # Crear pestañas para organizar las tablas
+    tab1, tab2, tab3 = st.tabs(['📊 Criterios Principales', '🎯 Criterios Secundarios', '📈 Evaluación y Umbrales'])
+    
+    with tab1:
+        st.caption('Configuración de puntajes para los criterios principales de evaluación')
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown('**📍 Estatus**')
+            score_tables['estatus'] = st.data_editor(
+                score_tables['estatus'],
                 num_rows='dynamic',
-
-
-
-
-
-
-
                 hide_index=True,
-
-
-
-
-
-
-
                 use_container_width=True,
-
-
-
-
-
-
-
-                key=f'tabla_{key}',
-
-
-
-
-
-
-
+                key='tabla_estatus',
             )
-
-
-
-
-
-
-
-    st.markdown('**Evaluacion y umbrales**')
-
-
-
-
-
-
-
-    score_tables['evaluacion'] = st.data_editor(
-
-
-
-
-
-
-
-        score_tables['evaluacion'],
-
-
-
-
-
-
-
-        num_rows='dynamic',
-
-
-
-
-
-
-
-        hide_index=True,
-
-
-
-
-
-
-
-        use_container_width=True,
-
-
-
-
-
-
-
-        key='tabla_evaluacion',
-
-
-
-
-
-
-
-    )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-
-
-
-
-
-
-
-st.markdown('### Editor de portafolio')
-
-
-
-
-
-
-
-st.caption('Agrega o ajusta proyectos antes de ejecutar la estimacion de candidatos.')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        
+        with col2:
+            st.markdown('**💥 Impacto**')
+            score_tables['impacto'] = st.data_editor(
+                score_tables['impacto'],
+                num_rows='dynamic',
+                hide_index=True,
+                use_container_width=True,
+                key='tabla_impacto',
+            )
+        
+        with col3:
+            st.markdown('**📋 Estado PM**')
+            score_tables['estado_pm'] = st.data_editor(
+                score_tables['estado_pm'],
+                num_rows='dynamic',
+                hide_index=True,
+                use_container_width=True,
+                key='tabla_estado_pm',
+            )
+    
+    with tab2:
+        st.caption('Configuración de puntajes para criterios complementarios')
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown('**✅ Activo PM**')
+            score_tables['activo_pm'] = st.data_editor(
+                score_tables['activo_pm'],
+                num_rows='dynamic',
+                hide_index=True,
+                use_container_width=True,
+                key='tabla_activo_pm',
+            )
+        
+        with col2:
+            st.markdown('**🔄 Potencial Transferencia**')
+            score_tables['potencial_transferencia'] = st.data_editor(
+                score_tables['potencial_transferencia'],
+                num_rows='dynamic',
+                hide_index=True,
+                use_container_width=True,
+                key='tabla_potencial_transferencia',
+            )
+        
+        with col3:
+            st.markdown('**👤 Tiene Resp IN**')
+            score_tables['tiene_resp_in'] = st.data_editor(
+                score_tables['tiene_resp_in'],
+                num_rows='dynamic',
+                hide_index=True,
+                use_container_width=True,
+                key='tabla_tiene_resp_in',
+            )
+    
+    with tab3:
+        st.caption('Define los umbrales de evaluación para categorizar proyectos según su puntaje')
+        st.markdown('**📊 Evaluación y Umbrales**')
+        score_tables['evaluacion'] = st.data_editor(
+            score_tables['evaluacion'],
+            num_rows='dynamic',
+            hide_index=True,
+            use_container_width=True,
+            key='tabla_evaluacion',
+        )
 
 portafolio_df = utils.normalize_df(db.fetch_df())
 
+# ============================================================================
+# SECCIÓN: GESTIÓN DE PORTAFOLIO
+# ============================================================================
 
+st.markdown('---')
+st.markdown('### 📁 Gestión de Portafolio')
 
+col_reset, col_ejemplo, col_plantilla, col_instructivo = st.columns(4)
 
+with col_reset:
+    st.markdown("**🔄 Resetear**")
+    if st.button("Resetear", use_container_width=True, type="secondary", key="btn_reset", disabled=portafolio_df.empty):
+        empty_df = pd.DataFrame(columns=portafolio_df.columns) if not portafolio_df.empty else pd.DataFrame()
+        db.replace_all(empty_df)
+        for key in list(st.session_state.keys()):
+            if any(x in key.lower() for x in ['ranking', 'fase', 'portafolio', 'payload']):
+                del st.session_state[key]
+        st.cache_data.clear()
+        st.rerun()
 
+with col_ejemplo:
+    st.markdown("**🎯 Ejemplo**")
+    if st.button("Cargar", use_container_width=True, type="primary", key="btn_ejemplo"):
+        sample = utils.normalize_df(_sample_portafolio())
+        db.replace_all(sample)
+        for key in ['ranking', 'fase1_payload', 'fase0_resultado']:
+            st.session_state.pop(key, None)
+        st.toast("✅ Ejemplo cargado correctamente", icon="✅")
+        st.rerun()
 
+with col_plantilla:
+    st.markdown("**📥 Plantilla**")
+    template_xlsx = _build_template_excel(_portafolio_template())
+    if template_xlsx:
+        st.download_button('Descargar', data=template_xlsx, file_name=f'plantilla.xlsx',
+                          mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                          key='btn_template', use_container_width=True)
 
-if portafolio_df.empty:
+with col_instructivo:
+    st.markdown("**📖 Instructivo**")
+    instructivo_xlsx = _build_instructive_excel(_template_instructions())
+    if instructivo_xlsx:
+        st.download_button('Descargar', data=instructivo_xlsx, file_name=f'instructivo.xlsx',
+                          mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                          key='btn_instructivo', use_container_width=True)
 
+st.markdown('---')
+st.markdown('### 📤 Carga Masiva')
+st.caption('Sube un archivo Excel o CSV con múltiples proyectos')
 
-
-
-
-
-
-    sample = utils.normalize_df(_sample_portafolio())
-
-
-
-
-
-
-
-    db.replace_all(sample)
-
-
-
-
-
-
-
-    portafolio_df = sample
-
-
-
-
-
-
-
-    st.info('Se cargaron datos de ejemplo para comenzar a trabajar.')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-st.markdown('#### Plantillas y carga masiva')
-
-
-
-
-
-
-
-template_df = _portafolio_template()
-instructions = _template_instructions()
-template_xlsx = _build_template_excel(template_df)
-instructivo_xlsx = _build_instructive_excel(instructions)
-
-cols_template = st.columns([1, 1, 2])
-with cols_template[0]:
-    if template_xlsx is not None:
-        st.download_button(
-            'Descargar plantilla Excel',
-            data=template_xlsx,
-            file_name='plantilla_portafolio.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            key='download_template_xlsx',
-            use_container_width=True,
-        )
-    else:
-        st.info('Instala openpyxl para habilitar la plantilla de carga en formato Excel.')
-with cols_template[1]:
-    if instructivo_xlsx is not None:
-        st.download_button(
-            'Descargar instructivo',
-            data=instructivo_xlsx,
-            file_name='instructivo_portafolio.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            key='download_instructivo_xlsx',
-            use_container_width=True,
-        )
-    else:
-        st.info('Instala openpyxl para descargar el instructivo en Excel.')
-with cols_template[2]:
-    st.caption(
-        'Descarga la plantilla de carga o el instructivo segun necesites y usa la carga masiva para reemplazar o '
-        'anexar proyectos.'
-    )
 uploaded_file = st.file_uploader(
-
-
-
-
-
-
-
-    'Cargar portafolio (CSV o Excel)',
-
-
-
-
-
-
-
+    'Selecciona archivo',
     type=['csv', 'xlsx', 'xls'],
 
 
@@ -3090,6 +2796,7 @@ if uploaded_file is not None:
                     st.warning(f'Valores fuera de catalogo detectados en la carga: {details}. Se limpiaron para revision.')
                 db.replace_all(df_norm)
                 portafolio_df = df_norm
+                st.session_state['portafolio_loaded_at'] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 st.session_state.pop('fase0_result', None)
                 st.session_state.pop('fase1_payload', None)
                 st.session_state.pop('fase1_ready', None)
@@ -3134,24 +2841,12 @@ else:
 
     st.caption('Selecciona un archivo para activar la carga masiva.')
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+st.markdown('---')
+st.markdown('### 📝 Editor de Proyectos')
+st.caption('Visualiza y edita manualmente los proyectos de tu portafolio')
 
 display_df = portafolio_df.drop(columns=RESULT_COLUMNS, errors='ignore')
-with st.expander('Planilla de proyectos (edicion manual)', expanded=False):
-    st.caption('Edita la informacion base del portafolio. Los campos de resultado se recalculan cuando vuelves a evaluar.')
-    st.markdown('<div class="data-editor">', unsafe_allow_html=True)
+with st.expander('📋 Ver tabla de proyectos', expanded=True):
     portafolio_editado = st.data_editor(
         display_df,
         num_rows='dynamic',
@@ -3305,7 +3000,10 @@ st.caption('La estimacion usa los puntajes configurados y otorga un bono si la f
 
 
 
-if st.button('Calcular ranking de candidatos', key='btn_calcular'):
+# Verificar si hay datos cargados
+if portafolio_df.empty:
+    st.info('⚪ No hay proyectos cargados. Carga datos de ejemplo o un archivo para calcular el ranking.')
+elif st.button('Calcular ranking de candidatos', key='btn_calcular'):
 
 
 
@@ -3371,11 +3069,15 @@ if st.button('Calcular ranking de candidatos', key='btn_calcular'):
 
                 df_eval[col] = ''
 
-
-
-
-
-
+        # Definir pares de columnas para lookups
+        pairs = [
+            ('estatus', 'Estatus'),
+            ('impacto', 'Impacto'),
+            ('estado_pm', 'Estado PM'),
+            ('activo_pm', 'Activo PM'),
+            ('potencial_transferencia', 'Potencial transferencia'),
+            ('tiene_resp_in', 'Tiene Resp IN'),
+        ]
 
         lookups = {key: _prepare_lookup(score_tables[key]) for key, _ in pairs}
 

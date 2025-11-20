@@ -15,43 +15,63 @@ BENEFITS = [
 PHASES = [
     {
         "title": "Fase 0",
+        "icon": "📂",
         "subtitle": "Portafolio y filtro inicial",
         "summary": "Registrar iniciativas en el portafolio maestro con datos clave y filtros de madurez",
         "detail": (
-            "Consolida informacion (impacto, estado, responsables, fechas) y realiza un primer filtro para definir avance."
+            "Consolida información (impacto, estado, responsables, fechas) y realiza un primer filtro para definir avance."
         ),
+        "outputs": ["Portafolio maestro", "Ranking de proyectos", "Métricas iniciales"]
     },
     {
         "title": "Fase 1",
-        "subtitle": "IRL (Radiografia)",
-        "summary": "Evaluar seis dimensiones (CRL, BRL, TRL, IPRL, TmRL, FRL) y obtener la radiografia del proyecto",
+        "icon": "📈",
+        "subtitle": "IRL (Radiografía)",
+        "summary": "Evaluar seis dimensiones (CRL, BRL, TRL, IPRL, TmRL, FRL) y obtener la radiografía del proyecto",
         "detail": (
-            "Aplica la calculadora de madurez para cliente, negocio, tecnologia, PI, equipo y financiamiento con evidencias trazables."
+            "Aplica la calculadora de madurez para cliente, negocio, tecnología, PI, equipo y financiamiento con evidencias trazables."
         ),
+        "outputs": ["Evaluación IRL completa", "Radar de madurez", "Evidencias por dimensión"]
     },
     {
         "title": "Fase 2",
-        "subtitle": "EBCT",
-        "summary": "Analizar el proyecto segun la trayectoria EBCT (Incipiente, Validacion/PI, Mercado, Comercializacion)",
+        "icon": "🧭",
+        "subtitle": "EBCT - Evaluación",
+        "summary": "Analizar el proyecto según la trayectoria EBCT (Incipiente, Validación/PI, Mercado, Comercialización)",
         "detail": (
-            "Revisa subcaracteristicas EBCT, identifica brechas y prepara recomendaciones para mercado y comercializacion."
+            "Revisa 34 características EBCT distribuidas en 4 fases, identifica el nivel de cumplimiento de cada una y genera un heatmap de brechas."
         ),
+        "outputs": ["Evaluación de 34 características", "Heatmap de cumplimiento", "Identificación de brechas"]
     },
     {
         "title": "Fase 3",
-        "subtitle": "Diagnostico",
-        "summary": "Definir requerimientos de recursos humanos, tecnologia y financiamiento",
+        "icon": "🎯",
+        "subtitle": "Características Críticas",
+        "summary": "Realizar seguimiento y plan de acción para las características críticas identificadas en EBCT",
         "detail": (
-            "Elabora carta Gantt, lista de recursos y planifica reuniones de seguimiento para cerrar brechas."
+            "Prioriza características con bajo cumplimiento, define acciones correctivas, asigna responsables y establece plazos para cerrar brechas críticas del proyecto."
         ),
+        "outputs": ["Lista de características críticas", "Plan de acción detallado", "Cronograma de seguimiento"]
     },
     {
-        "title": "Fase 4",
-        "subtitle": "Panel de indicadores",
-        "summary": "Monitorear el portafolio y el desempeno de cada proyecto",
+        "title": "Consolidado",
+        "icon": "💾",
+        "subtitle": "Base de datos para análisis",
+        "summary": "Exportar y consolidar evaluaciones para análisis individual y comparativo entre proyectos",
         "detail": (
-            "Integra datos en paneles individuales y generales para apoyar decisiones estrategicas."
+            "El usuario puede descargar los datos de Fase 0, IRL, EBCT y plan de acción en formato Excel para anexar a sus propias bases de información y realizar análisis personalizados."
         ),
+        "outputs": ["Excel consolidado", "Base de datos individual", "Datos para análisis comparativo"]
+    },
+    {
+        "title": "Indicadores",
+        "icon": "📊",
+        "subtitle": "Panel de seguimiento",
+        "summary": "Monitorear el portafolio y el desempeño de cada proyecto con visualizaciones interactivas",
+        "detail": (
+            "Integra datos en paneles individuales y generales para apoyar decisiones estratégicas. Permite análisis por proyecto o comparaciones entre proyectos."
+        ),
+        "outputs": ["Dashboards interactivos", "Métricas de seguimiento", "Reportes comparativos"]
     },
 ]
 
@@ -313,7 +333,74 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown("### Fases de acompanamiento")
+# Sección de Hoja de Ruta Interactiva
+st.markdown("---")
+st.markdown("### 🗺️ Hoja de Ruta del Sistema")
+st.markdown(
+    """
+    <div style='background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); 
+                padding: 1.5rem 2rem; border-radius: 16px; margin-bottom: 2rem;
+                border-left: 5px solid #2e7d32;'>
+        <p style='margin: 0; font-size: 1.05rem; line-height: 1.6; color: #1b5e20;'>
+            <strong>📋 Flujo completo de trabajo:</strong> El sistema te guía desde la carga inicial de datos hasta 
+            la generación de indicadores estratégicos, pasando por evaluaciones de madurez tecnológica y comercial.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Crear columnas para el flujo
+flow_cols = st.columns(6)
+flow_steps = [
+    {"icon": "📂", "title": "Carga", "desc": "Portafolio maestro"},
+    {"icon": "📈", "title": "IRL", "desc": "Evaluación madurez"},
+    {"icon": "🧭", "title": "EBCT", "desc": "34 características"},
+    {"icon": "🎯", "title": "Críticas", "desc": "Plan de acción"},
+    {"icon": "💾", "title": "Exporta", "desc": "Consolida datos"},
+    {"icon": "📊", "title": "Analiza", "desc": "Visualiza indicadores"}
+]
+
+for col, step in zip(flow_cols, flow_steps):
+    with col:
+        st.markdown(
+            f"""
+            <div style='text-align: center; padding: 1rem; background: white; 
+                        border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                        border: 2px solid #e8f5e9;'>
+                <div style='font-size: 2.5rem; margin-bottom: 0.5rem;'>{step['icon']}</div>
+                <div style='font-weight: 700; color: #2e7d32; margin-bottom: 0.3rem;'>{step['title']}</div>
+                <div style='font-size: 0.85rem; color: #666;'>{step['desc']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+# Agregar explicación del consolidado
+st.markdown("<br>", unsafe_allow_html=True)
+consolidado_cols = st.columns([1, 2, 1])
+with consolidado_cols[1]:
+    with st.expander("💡 ¿Cómo funciona el consolidado de datos?", expanded=False):
+        st.markdown("""
+        **El consolidado es tu base de datos personalizada:**
+        
+        🔹 **Después de cada evaluación** (Fase 0, IRL, EBCT), puedes descargar los datos en formato Excel
+        
+        🔹 **Anexa a tus bases propias**: Integra con sistemas de gestión existentes o análisis personalizados
+        
+        🔹 **Análisis flexible**:
+        - 📊 Individual: Seguimiento detallado de un proyecto específico
+        - 📈 Comparativo: Benchmarking entre múltiples proyectos
+        - 🎯 Estratégico: Identificación de patrones y oportunidades en el portafolio
+        
+        🔹 **Alimenta los indicadores**: Los datos consolidados se pueden cargar en la sección de Indicadores para 
+        generar visualizaciones y reportes sin necesidad de pasar por todas las fases cada vez
+        
+        **Resultado:** Una base de conocimiento que crece con cada evaluación y facilita la toma de decisiones basada en datos.
+        """)
+
+st.markdown("---")
+st.markdown("### Fases de acompañamiento")
 
 phase_cols = st.columns(len(PHASES))
 for index, (col, phase) in enumerate(zip(phase_cols, PHASES), start=1):
@@ -321,7 +408,7 @@ for index, (col, phase) in enumerate(zip(phase_cols, PHASES), start=1):
         st.markdown(
             f"""
             <div class=\"phase-card\">
-                <div class=\"phase-index\">{index}</div>
+                <div class=\"phase-index\">{phase['icon']}</div>
                 <h3>{phase['title']}</h3>
                 <span>{phase['subtitle']}</span>
                 <p>{phase['summary']}</p>
@@ -329,8 +416,11 @@ for index, (col, phase) in enumerate(zip(phase_cols, PHASES), start=1):
             """,
             unsafe_allow_html=True,
         )
-        with st.expander("Detalle de la fase"):
-            st.write(phase["detail"])
+        with st.expander("📋 Detalle y resultados"):
+            st.write(f"**Descripción:** {phase['detail']}")
+            st.markdown("**📤 Salidas/Outputs:**")
+            for output in phase['outputs']:
+                st.markdown(f"- {output}")
 
 st.markdown(
     "<div class='divider-banner'>Hoja de ruta del proyecto: desde la I+D hacia la comercializacion</div>",
@@ -338,6 +428,47 @@ st.markdown(
 )
 
 st.markdown("#### Enfoque en resultados tangibles")
+
+# Casos de uso del consolidado
+casos_uso_cols = st.columns(3)
+with casos_uso_cols[0]:
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #fff3e0, #ffe0b2); padding: 1.5rem; 
+                border-radius: 12px; height: 100%; border-left: 4px solid #f57c00;'>
+        <h4 style='color: #e65100; margin-top: 0;'>🎯 Análisis Individual</h4>
+        <p style='font-size: 0.9rem; color: #4e342e;'>
+            Seguimiento detallado de un proyecto desde su inicio hasta comercialización. 
+            Exporta datos específicos y compara evolución temporal.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with casos_uso_cols[1]:
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #e3f2fd, #bbdefb); padding: 1.5rem; 
+                border-radius: 12px; height: 100%; border-left: 4px solid #1976d2;'>
+        <h4 style='color: #0d47a1; margin-top: 0;'>📊 Análisis Comparativo</h4>
+        <p style='font-size: 0.9rem; color: #263238;'>
+            Benchmarking entre proyectos del portafolio. Identifica mejores prácticas 
+            y patrones de éxito para replicar estrategias.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with casos_uso_cols[2]:
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #f3e5f5, #e1bee7); padding: 1.5rem; 
+                border-radius: 12px; height: 100%; border-left: 4px solid #7b1fa2;'>
+        <h4 style='color: #4a148c; margin-top: 0;'>🔄 Integración Continua</h4>
+        <p style='font-size: 0.9rem; color: #4a148c;'>
+            Anexa datos a sistemas externos (ERP, CRM). Alimenta reportes gerenciales 
+            y dashboards ejecutivos con información actualizada.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("#### Bloques operativos del sistema")
 st.markdown(
     """
     <div class="focus-grid">

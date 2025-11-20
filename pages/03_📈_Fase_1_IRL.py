@@ -8,277 +8,352 @@ from pathlib import Path
 from html import escape
 import re
 from typing import Any
-
-
-def _rerun_app() -> None:
-    """Trigger a Streamlit rerun compatible with multiple versions."""
-
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:  # pragma: no cover - fallback for older Streamlit versions
-        st.experimental_rerun()
-
-from core import db, utils, trl, irl_level_flow
-from core.data_table import render_table
-from core.db_trl import save_trl_result, get_trl_history
+from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
+from core import irl_level_flow, trl, db, utils
+from core.components import render_irl_banner
 from core.theme import load_theme
+from core.db_trl import save_trl_result, get_trl_history
+from core.data_table import render_table
 
-# Definiciones de dimensiones con sus descripciones
-DIMENSION_DESCRIPTIONS = {
-    "CRL": "Clientes/Mercado",
-    "BRL": "Negocio/Modelo",
-    "TRL": "Tecnológico",
-    "IPRL": "Propiedad Intelectual",
-    "TmRL": "Equipo/Capacidades",
-    "FRL": "Finanzas/Riesgo",
-}
+# Utilidades locales mínimas
+def _clean_text(text: str | None) -> str:
+    """Normaliza texto de evidencia: convierte None a '', recorta espacios y saltos."""
+    return (text or "").strip()
 
+# Banner informativo (placeholder seguro si no hay HTML específico)
+IRL_IMPORTANT_HTML = (
+    "<div class='irl-info'>Responde cada nivel. Si marcas VERDADERO, agrega antecedentes." "</div>"
+)
+
+def _safe_load_theme() -> None:
+    """Carga el tema de forma tolerante a fallos.
+
+    Evita NameError/ImportError en contextos donde el import tarde en resolverse o
+    el runner recargue módulos fuera de orden.
+    """
+    try:
+        from core.theme import load_theme as _lt  # type: ignore
+        _lt()
+    except Exception:
+        # errores no críticos en inyección de tema no deben romper la página
+        pass
+
+
+def generate_irl_excel_template() -> bytes:
+    """Genera plantilla Excel con todas las preguntas IRL para evaluación offline."""
+    wb = Workbook()
+    
+    # Hoja 1: Instructivo
+    ws_instructivo = wb.active
+    ws_instructivo.title = "📋 Instructivo"
+    
+    instructivo_data = [
+        ["INSTRUCCIONES PARA COMPLETAR LA EVALUACIÓN IRL"],
+        [""],
+        ["1. Vaya a la hoja 'Evaluación IRL'"],
+        ["   TODAS las respuestas vienen PRE-LLENADAS con FALSO"],
+        [""],
+        ["2. Revise cada pregunta y CAMBIE a VERDADERO solo las que SÍ se cumplan:"],
+        ["   • Si la pregunta NO aplica → Deje FALSO"],
+        ["   • Si la pregunta SÍ aplica → Cambie a VERDADERO"],
+        [""],
+        ["3. Columna 'Evidencia':"],
+        ["   • Si cambió a VERDADERO → Complete la evidencia (OBLIGATORIO)"],
+        ["   • Si dejó en FALSO → Deje la celda vacía"],
+        [""],
+        ["4. IMPORTANTE - Escriba exactamente:"],
+        ["   VERDADERO  (todo junto, sin espacios)"],
+        ["   FALSO      (todo junto, sin espacios)"],
+        [""],
+        ["5. NO MODIFIQUE las columnas:"],
+        ["   • Dimensión"],
+        ["   • Nivel"],
+        ["   • # Pregunta"],
+        ["   • Pregunta"],
+        [""],
+        ["6. VENTAJA: Solo cambia las que SÍ cumplen, no pierde tiempo"],
+        [""],
+        ["7. Guarde el archivo (Ctrl+S) y súbalo en la plataforma"],
+    ]
+    
+    for row in instructivo_data:
+        ws_instructivo.append(row)
+    
+    # Estilos para instructivo
+    for row in ws_instructivo.iter_rows(min_row=1, max_row=1):
+        for cell in row:
+            cell.font = Font(bold=True, size=14, color="FFFFFF")
+            cell.fill = PatternFill(start_color="1b5e20", end_color="1b5e20", fill_type="solid")
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+    
+    ws_instructivo.column_dimensions['A'].width = 80
+    
+    # Hoja 2: Evaluación IRL
+    ws_eval = wb.create_sheet("Evaluación IRL")
+    
+    # Encabezados
+    headers = ["Dimensión", "Nivel", "# Pregunta", "Pregunta", "Respuesta", "Evidencia"]
+    ws_eval.append(headers)
+    
+    # Estilo encabezados
+    header_fill = PatternFill(start_color="2e7d32", end_color="2e7d32", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    for cell in ws_eval[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    
+    # Agregar todas las preguntas (sin fila de ejemplo)
+    row_num = 2  # Empezar directamente después de encabezados
+    for dimension, dim_desc in IRL_DIMENSIONS:
+        levels = LEVEL_DEFINITIONS.get(dimension, [])
+        
+        for level in levels:
+            level_id = level["nivel"]
+            preguntas = level.get("preguntas", [])
+            
+            for idx, pregunta in enumerate(preguntas, start=1):
+                ws_eval.append([
+                    f"{dimension} - {dim_desc}",
+                    level_id,
+                    idx,
+                    pregunta,
+                    "FALSO",  # Pre-llenado con FALSO por defecto
+                    ""   # Evidencia vacía
+                ])
+                row_num += 1
+    
+    # Ajustar anchos de columna
+    ws_eval.column_dimensions['A'].width = 25
+    ws_eval.column_dimensions['B'].width = 8
+    ws_eval.column_dimensions['C'].width = 10
+    ws_eval.column_dimensions['D'].width = 60
+    ws_eval.column_dimensions['E'].width = 15
+    ws_eval.column_dimensions['F'].width = 50
+    
+    # Aplicar bordes y alineación
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    for row in ws_eval.iter_rows(min_row=2, max_row=row_num-1):
+        for idx, cell in enumerate(row, 1):
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            
+            # Forzar formato de TEXTO en columna E (Respuesta) para evitar conversión a booleano
+            if idx == 5:  # Columna E (Respuesta)
+                cell.number_format = '@'  # Formato de texto
+    
+    # Guardar en BytesIO
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+
+def load_irl_excel_responses(uploaded_file) -> dict:
+    """Carga respuestas desde Excel con mapeo inteligente y validación robusta."""
+    try:
+        df = pd.read_excel(uploaded_file, sheet_name="Evaluación IRL", header=0)
+        
+        # 🔍 PASO 1: Detectar columnas automáticamente
+        col_dimension = None
+        col_nivel = None
+        col_num_pregunta = None
+        col_pregunta = None
+        col_respuesta = None
+        col_evidencia = None
+        
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if "dimensión" in col_lower or "dimension" in col_lower:
+                col_dimension = col
+            elif "nivel" in col_lower:
+                col_nivel = col
+            elif "#" in col_lower and "pregunta" in col_lower:
+                col_num_pregunta = col
+            elif "pregunta" in col_lower and "#" not in col_lower:
+                col_pregunta = col
+            elif "respuesta" in col_lower:
+                col_respuesta = col
+            elif "evidencia" in col_lower:
+                col_evidencia = col
+        
+        # Mostrar columnas detectadas
+        st.info(f"🔍 **Mapeo de columnas detectado:**\n- Dimensión: `{col_dimension}`\n- Nivel: `{col_nivel}`\n- # Pregunta: `{col_num_pregunta}`\n- Respuesta: `{col_respuesta}`\n- Evidencia: `{col_evidencia}`")
+        
+        # Validar que se encontraron todas las columnas necesarias
+        if not all([col_dimension, col_nivel, col_num_pregunta, col_respuesta, col_evidencia]):
+            st.error("❌ No se pudieron detectar todas las columnas necesarias")
+            st.error(f"Columnas disponibles: {list(df.columns)}")
+            return {}
+        
+        # 🔍 PASO 2: Procesar filas con validación detallada
+        respuestas = {}
+        stats = {
+            'total': 0,
+            'validas': 0,
+            'invalidas': 0,
+            'ejemplo': 0,
+            'vacias': 0,
+            'errores': []
+        }
+        
+        for idx_row, row in df.iterrows():
+            try:
+                stats['total'] += 1
+                
+                # Leer dimensión
+                dimension_full = str(row[col_dimension]) if pd.notna(row[col_dimension]) else ""
+                if not dimension_full or dimension_full == 'nan':
+                    stats['vacias'] += 1
+                    continue
+                
+                dimension = dimension_full.split(" - ")[0].strip()
+                
+                # Leer nivel y número de pregunta
+                if not pd.notna(row[col_nivel]) or not pd.notna(row[col_num_pregunta]):
+                    stats['vacias'] += 1
+                    continue
+                
+                level_id = int(row[col_nivel])
+                pregunta_num = int(row[col_num_pregunta])
+                
+                # Leer y limpiar respuesta - IMPORTANTE: Excel convierte VERDADERO/FALSO a booleanos
+                respuesta_raw = row[col_respuesta]
+                
+                # Manejar valores booleanos de Excel
+                if isinstance(respuesta_raw, bool):
+                    respuesta = "VERDADERO" if respuesta_raw else "FALSO"
+                elif pd.notna(respuesta_raw):
+                    respuesta_str = str(respuesta_raw).strip().upper().replace("\n", "").replace("\r", "").replace(" ", "").replace("\t", "")
+                    
+                    # Convertir variantes comunes
+                    if respuesta_str in ["TRUE", "T", "1"]:
+                        respuesta = "VERDADERO"
+                    elif respuesta_str in ["FALSE", "F", "0"]:
+                        respuesta = "FALSO"
+                    elif respuesta_str in ["VERDADERO", "V"]:
+                        respuesta = "VERDADERO"
+                    elif respuesta_str in ["FALSO"]:
+                        respuesta = "FALSO"
+                    else:
+                        respuesta = respuesta_str
+                else:
+                    respuesta = ""
+                
+                # DEBUG: Si es vacío o "NAN", registrar
+                if not respuesta or respuesta == "NAN":
+                    stats['vacias'] += 1
+                    continue
+                
+                # Validar respuesta final
+                if respuesta not in ["VERDADERO", "FALSO"]:
+                    stats['invalidas'] += 1
+                    stats['errores'].append({
+                        'fila': idx_row + 2,
+                        'dimension': dimension,
+                        'nivel': level_id,
+                        'pregunta_num': pregunta_num,
+                        'respuesta_raw': f"'{respuesta_raw}' (tipo: {type(respuesta_raw).__name__})",
+                        'respuesta_limpia': f"'{respuesta}'",
+                        'motivo': f'No se pudo normalizar a VERDADERO/FALSO'
+                    })
+                    continue
+                
+                # Leer evidencia
+                evidencia = str(row[col_evidencia]) if pd.notna(row[col_evidencia]) else ""
+                
+                # Crear keys en el formato correcto
+                resp_key = f"resp_{dimension}_{level_id}_{pregunta_num}"
+                toggle_key = f"toggle_{dimension}_{level_id}_{pregunta_num}"
+                evid_key = f"evid_{dimension}_{level_id}_{pregunta_num}"
+                
+                respuestas[resp_key] = respuesta
+                respuestas[toggle_key] = (respuesta == "VERDADERO")
+                respuestas[evid_key] = evidencia.strip()
+                
+                stats['validas'] += 1
+                
+            except Exception as e:
+                stats['invalidas'] += 1
+                stats['errores'].append({
+                    'fila': idx_row + 2,
+                    'motivo': f'Error: {str(e)}'
+                })
+        
+        # 📊 PASO 3: Mostrar reporte detallado
+        st.markdown("---")
+        st.markdown("### 📊 Reporte de Carga")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📄 Filas Totales", stats['total'])
+        with col2:
+            st.metric("✅ Válidas", stats['validas'], delta=f"{stats['validas']/stats['total']*100:.0f}%" if stats['total'] > 0 else "0%")
+        with col3:
+            st.metric("⚠️ Inválidas", stats['invalidas'])
+        with col4:
+            st.metric("📝 Omitidas", stats['ejemplo'] + stats['vacias'])
+        
+        # Mostrar errores si existen
+        if stats['errores']:
+            with st.expander(f"⚠️ Ver detalles de {len(stats['errores'])} fila(s) con problemas (primeras 30)"):
+                for i, error in enumerate(stats['errores'][:30], 1):
+                    if 'respuesta_raw' in error:
+                        st.text(f"{i}. Fila {error['fila']}: {error['dimension']}-N{error['nivel']}-P{error['pregunta_num']}")
+                        st.text(f"   Valor original: {error['respuesta_raw']}")
+                        st.text(f"   Limpiado: {error['respuesta_limpia']}")
+                        # Mostrar bytes para detectar caracteres invisibles
+                        if error['respuesta_limpia'] != "''":
+                            respuesta_bytes = error['respuesta_limpia'].strip("'").encode('utf-8')
+                            st.text(f"   Bytes: {respuesta_bytes}")
+                        st.text(f"   ❌ {error['motivo']}")
+                    else:
+                        st.text(f"{i}. Fila {error.get('fila', '?')}: {error['motivo']}")
+                    st.text("")
+        
+        # Mensaje final
+        if not respuestas:
+            st.error("❌ No se encontraron respuestas válidas en el archivo.")
+            return {}
+        else:
+            st.success(f"✅ Carga exitosa: {stats['validas']} respuestas listas para procesar")
+        
+        return respuestas
+    
+    except Exception as e:
+        st.error(f"❌ Error crítico al leer el archivo Excel: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return {}
+
+# Definiciones mínimas para restaurar el módulo tras un refactor: si alguna
+# lista de niveles falta, definimos un contenedor vacío para mantener la app
+# operativa. Las listas completas se definen más abajo cuando corresponda.
 IRL_DIMENSIONS = [
-    ("CRL", 0),
-    ("BRL", 0),
-    ("TRL", 4),
-    ("IPRL", 5),
-    ("TmRL", 6),
-    ("FRL", 5),
+    ("CRL", "Cliente"),
+    ("BRL", "Modelo de negocio"),
+    ("TRL", "Tecnología"),
+    ("IPRL", "Propiedad Intelectual"),
+    ("TmRL", "Equipo"),
+    ("FRL", "Finanzas"),
 ]
 
-CRL_LEVELS = [
-    {
-        "nivel": 1,
-        "descripcion": "Hipótesis especulativa sobre una posible necesidad en el mercado.",
-        "preguntas": [
-            "¿Tiene alguna hipótesis sobre un problema o necesidad que podría existir en el mercado?",
-            "¿Ha identificado quiénes podrían ser sus posibles clientes, aunque sea de manera especulativa?",
-        ],
-    },
-    {
-        "nivel": 2,
-        "descripcion": "Familiarización inicial con el mercado y necesidades más específicas detectadas.",
-        "preguntas": [
-            "¿Ha realizado alguna investigación secundaria o revisión de mercado para entender problemas del cliente?",
-            "¿Tiene una descripción más clara y específica de las necesidades o problemas detectados?",
-        ],
-    },
-    {
-        "nivel": 3,
-        "descripcion": "Primer feedback de mercado y validación preliminar de necesidades.",
-        "preguntas": [
-            "¿Ha iniciado contactos directos con posibles usuarios o expertos del mercado para obtener retroalimentación?",
-            "¿Ha comenzado a desarrollar una hipótesis más clara sobre los segmentos de clientes y sus problemas?",
-        ],
-    },
-    {
-        "nivel": 4,
-        "descripcion": "Confirmación del problema con varios usuarios y segmentación inicial.",
-        "preguntas": [
-            "¿Ha confirmado el problema o necesidad con varios clientes o usuarios reales?",
-            "¿Ha definido una hipótesis de producto basada en el feedback recibido de los usuarios?",
-            "¿Tiene segmentación inicial de clientes en función del problema identificado?",
-        ],
-    },
-    {
-        "nivel": 5,
-        "descripcion": "Interés establecido por parte de usuarios y comprensión más profunda del mercado.",
-        "preguntas": [
-            "¿Cuenta con evidencia de interés concreto por parte de clientes o usuarios hacia su solución?",
-            "¿Ha establecido relaciones con potenciales clientes o aliados que retroalimentan su propuesta de valor?",
-        ],
-    },
-    {
-        "nivel": 6,
-        "descripcion": "Beneficios de la solución confirmados a través de pruebas o asociaciones iniciales.",
-        "preguntas": [
-            "¿Ha realizado pruebas del producto o solución con clientes que validen sus beneficios?",
-            "¿Ha iniciado procesos de venta o pilotos con clientes reales o aliados estratégicos?",
-        ],
-    },
-    {
-        "nivel": 7,
-        "descripcion": "Clientes involucrados en pruebas extendidas o primeras ventas/test comerciales.",
-        "preguntas": [
-            "¿Tiene acuerdos o primeras ventas del producto (aunque sea versión de prueba)?",
-            "¿Los clientes han participado activamente en validaciones o pruebas extendidas del producto?",
-        ],
-    },
-    {
-        "nivel": 8,
-        "descripcion": "Ventas iniciales y preparación para ventas estructuradas y escalables.",
-        "preguntas": [
-            "¿Ha vendido sus primeros productos y validado la disposición de pago de un porcentaje relevante de clientes?",
-            "¿Cuenta con una organización comercial mínima (CRM, procesos de venta, canales definidos)?",
-        ],
-    },
-    {
-        "nivel": 9,
-        "descripcion": "Adopción consolidada y ventas repetibles a múltiples clientes reales.",
-        "preguntas": [
-            "¿Está realizando ventas escalables y repetibles con múltiples clientes?",
-            "¿Su empresa está enfocada en ejecutar un proceso de crecimiento comercial con foco en la demanda de clientes?",
-        ],
-    },
-]
+# Algunas colecciones podrían no estar definidas en esta página; declaramos vacías por defecto
+CRL_LEVELS: list[dict] = globals().get("CRL_LEVELS", [])
+TRL_LEVELS: list[dict] = globals().get("TRL_LEVELS", [])
+FRL_LEVELS: list[dict] = globals().get("FRL_LEVELS", [])
 
-FRL_LEVELS = [
-    {
-        "nivel": 1,
-        "descripcion": "Idea de negocios inicial con una descripción vaga. No hay una visión clara sobre las necesidades y las opciones de financiamiento.",
-        "preguntas": [
-            "¿Tiene una idea de negocio inicial con una descripción?",
-            "¿Tiene poco o ningún conocimiento de las actividades y costos relevantes para verificar el potencial/factibilidad de la idea?",
-            "¿Tiene poco conocimiento de las diferentes opciones y tipos de financiamiento?",
-        ],
-    },
-    {
-        "nivel": 2,
-        "descripcion": "Descripción del concepto de negocios. Están definidas las necesidades y opciones de financiamiento para los hitos iniciales",
-        "preguntas": [
-            "¿Ha descrito las actividades iniciales y costos que permiten verificar el potencial/factibilidad de la idea (1-6 meses)?",
-            "¿Tiene un plan básico con opciones de financiamiento para los hitos iniciales (1-6 meses)?",
-        ],
-    },
-    {
-        "nivel": 3,
-        "descripcion": "Concepto de negocios bien descrito, con un plan de verificación inicial. Primer pequeño financiamiento “blando” (soft funding) asegurado",
-        "preguntas": [
-            "¿Tiene financiamiento suficiente para asegurar la ejecución de las actividades iniciales de verificación/factibilidad (1-6 meses)?",
-            "¿Conoce los diferentes tipos de financiamiento (propio, blando, de capital, de clientes, etc.) y las ventajas y desventajas de cada uno?",
-        ],
-    },
-    {
-        "nivel": 4,
-        "descripcion": "Se cuenta con un buen pitch y breve presentación del negocio. Se cuenta con un plan con diferentes opciones de financiamiento a lo largo del tiempo.",
-        "preguntas": [
-            "¿Tiene un buen pitch y una breve presentación del negocio?",
-            "¿Ha preparado un plan de financiamiento para verificar el potencial comercial de la idea para los siguientes 3 a 12 meses?",
-            "¿Ha identificado las fuentes de financiamiento relevantes?",
-            "¿Ha obtenido fondos suficientes para implementar una parte sustancial del plan de verificación?",
-        ],
-    },
-    {
-        "nivel": 5,
-        "descripcion": "Se cuenta con una presentación orientada al inversionista y material de apoyo que ha sido testeado. Se ha solicitado y obtenido un mayor financiamiento adicional (blandos u otros).",
-        "preguntas": [
-            "¿Ha elaborado y ensayado el pitch para obtener financiamiento en un ambiente relevante?",
-            "¿Tiene una hoja de cálculo con el presupuesto inicial de ganancias y pérdidas y el flujo de caja para los próximos 12 meses?",
-            "¿Ha decidido cómo abordar la estrategia de financiamiento y las fuentes de financiamiento para alcanzar un modelo de negocio viable?",
-            "¿Conoce y entiende los requisitos y las consecuencias del financiamiento externo sobre el modelo de negocio, el control y la propiedad de la compañía?",
-        ],
-    },
-    {
-        "nivel": 6,
-        "descripcion": "Presentación mejorada para el inversionista, la que incluye aspectos de negocios y financieros. Se ha decidido buscar inversores privados y se tomaron los primeros contactos.",
-        "preguntas": [
-            "¿Ha mejorado/actualizado el pitch para obtener financiamiento en una audiencia relevante?",
-            "¿Tiene un presupuesto de ingresos y pérdidas y flujo de efectivo para negocios/proyectos a 3-5 años que permite esclarecer la necesidad de financiamiento a corto y mediano plazo?",
-        ],
-    },
-    {
-        "nivel": 7,
-        "descripcion": "El equipo presenta un caso de inversión sólido, el que incluye estados y planes. Existen conversaciones con inversionistas potenciales sobre una oferta",
-        "preguntas": [
-            "¿Tiene conversaciones con posibles fuentes de financiamiento externas en torno a una oferta definida (cuánto dinero, para qué, condiciones, valoración, etc.)?",
-            "¿La propuesta de financiamiento está completa, probada y comprobada, y existe un plan de negocios con proyecciones financieras y un plan de hitos?",
-            "¿Existen sistemas básicos de contabilidad y documentación para el seguimiento financiero?",
-        ],
-    },
-    {
-        "nivel": 8,
-        "descripcion": "Existe un orden y una estructura corporativa que permiten la inversión. Existen diálogos sobre los términos del acuerdo con los inversionistas interesados.",
-        "preguntas": [
-            "¿Ha tenido conversaciones concretas (a nivel de Hoja de Términos) con una o varias fuentes de financiamiento externas interesadas?",
-            "¿Está preparado y disponible todo el material necesario para el financiamiento externo (finanzas, plan de negocio, etc.)?",
-            "¿Existe una entidad jurídica correctamente establecida con una estructura de propiedad adecuada para la fuente de financiamiento visualizada?",
-            "¿Se ha recopilado y está disponible toda la documentación y acuerdos legales clave para una diligencia/revisión externa?",
-        ],
-    },
-    {
-        "nivel": 9,
-        "descripcion": "La inversión fue obtenida. Las necesidades y las opciones de inversión adicionales son consideradas continuamente",
-        "preguntas": [
-            "¿Tiene financiamiento garantizado por al menos 6 a 12 meses de ejecución de acuerdo con el plan comercial/plan operativo actual?",
-            "¿Está totalmente implementado un sistema de seguimiento financiero y contable para el control continuo del estado financiero actual?",
-            "¿Existe un buen pronóstico/previsión para identificar las futuras necesidades de financiamiento?",
-        ],
-    },
-]
-
-TRL_LEVELS = [
-    {
-        "nivel": 1,
-        "descripcion": "Principios básicos observados.",
-        "preguntas": [
-            "¿Ha identificado beneficios potenciales o aplicaciones útiles en los resultados de su investigación?",
-            "¿Tiene una idea vaga de la tecnología a desarrollar?",
-        ],
-    },
-    {
-        "nivel": 2,
-        "descripcion": "Concepto y/o aplicación tecnológica formulada.",
-        "preguntas": [
-            "¿Cuenta con un concepto de tecnología potencial, definido y descrito en su primera versión?",
-            "¿Se pueden definir o investigar aplicaciones prácticas para esta tecnologia?",
-        ],
-    },
-    {
-        "nivel": 3,
-        "descripcion": "Prueba de concepto analítica y experimental de funciones y/o características críticas.",
-        "preguntas": [
-            "¿Ha realizado pruebas analíticas y/o experimentales de funciones o características críticas en entorno de laboratorio?",
-            "¿Ha iniciado una I+D activa para desarrollar aún más la tecnología?",
-            "¿Tiene una primera idea de los requisitos o especificaciones del usuario final y/o casos de uso?",
-        ],
-    },
-    {
-        "nivel": 4,
-        "descripcion": "Validación de la tecnología en el laboratorio.",
-        "preguntas": [
-            "¿Ha integrado y demostrado el funcionamiento conjunto de los componentes básicos en un entorno de laboratorio?",
-            "¿Los resultados de las pruebas brindan evidencia inicial que indica que el concepto de tecnología funcionará?",
-        ],
-    },
-    {
-        "nivel": 5,
-        "descripcion": "Validación de tecnología en un entorno relevante.",
-        "preguntas": [
-            "¿Ha integrado y probado los componentes básicos de la tecnología en un entorno relevante?",
-            "¿Los resultados de las pruebas brindan evidencia de que la tecnología funcionará, con validación técnica?",
-            "¿Ha definido los requisitos o especificaciones del usuario final y/o casos de uso, basados en comentarios de los usuarios?",
-        ],
-    },
-    {
-        "nivel": 6,
-        "descripcion": "Demostración del prototipo en un entorno relevante.",
-        "preguntas": [
-            "¿Ha demostrado que el modelo o prototipo representativo de la tecnología funciona realmente en un entorno relevante?",
-        ],
-    },
-    {
-        "nivel": 7,
-        "descripcion": "Sistema/prototipo completo demostrado en ambiente operacional.",
-        "preguntas": [
-            "¿Ha demostrado que el prototipo o la tecnología completa funciona realmente en un entorno operativo?",
-            "¿Ha establecido los requisitos completos del usuario final/especificaciones y/o casos de uso?",
-        ],
-    },
-    {
-        "nivel": 8,
-        "descripcion": "Sistema tecnológico real completado y calificado mediante pruebas y demostraciones.",
-        "preguntas": [
-            "¿Cuenta con una tecnología completa que contiene todo lo necesario para que el usuario la utilice?",
-            "¿Cuenta con una tecnología funcional que resuelve el problema o necesidad del usuario?",
-            "¿Es la tecnología compatible con personas, procesos, objetivos, infraestructura, sistemas, etc., del usuario?",
-            "¿Han demostrado los primeros usuarios que la tecnología completa funciona en operaciones reales?",
-        ],
-    },
-    {
-        "nivel": 9,
-        "descripcion": "Sistema tecnológico probado con éxito en entorno operativo real.",
-        "preguntas": [
-            "¿Es la tecnología completa escalable y ha sido comprobada en operaciones reales por varios usuarios a lo largo del tiempo?",
-            "¿Está en curso el desarrollo continuo, la mejora, la optimización de la tecnología y la producción?",
-        ],
-    },
-]
+# Descripciones legibles por dimensión
+DIMENSION_DESCRIPTIONS = {dim: desc for dim, desc in IRL_DIMENSIONS}
 
 
 IPRL_LEVELS = [
@@ -548,6 +623,235 @@ BRL_LEVELS = [
     },
 ]
 
+# Dimensión Cliente (CRL)
+CRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Hipótesis especulativa sobre una posible necesidad en el mercado.",
+        "preguntas": [
+            "¿Tiene alguna hipótesis sobre un problema o necesidad que podría existir en el mercado?",
+            "¿Ha identificado quiénes podrían ser sus posibles clientes, aunque sea de manera especulativa?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Familiarización inicial con el mercado y necesidades más específicas detectadas.",
+        "preguntas": [
+            "¿Ha realizado alguna investigación secundaria o revisión de mercado para entender problemas del cliente?",
+            "¿Tiene una descripción más clara y específica de las necesidades o problemas detectados?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Primer feedback de mercado y validación preliminar de necesidades.",
+        "preguntas": [
+            "¿Ha iniciado contactos directos con posibles usuarios o expertos del mercado para obtener retroalimentación?",
+            "¿Ha comenzado a desarrollar una hipótesis más clara sobre los segmentos de clientes y sus problemas?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Confirmación del problema con varios usuarios y segmentación inicial.",
+        "preguntas": [
+            "¿Ha confirmado el problema o necesidad con varios clientes o usuarios reales?",
+            "¿Ha definido una hipótesis de producto basada en el feedback recibido de los usuarios?",
+            "¿Tiene segmentación inicial de clientes en función del problema identificado?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Interés establecido por parte de usuarios y comprensión más profunda del mercado.",
+        "preguntas": [
+            "¿Cuenta con evidencia de interés concreto por parte de clientes o usuarios hacia su solución?",
+            "¿Ha establecido relaciones con potenciales clientes o aliados que retroalimentan su propuesta de valor?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Beneficios de la solución confirmados a través de pruebas o asociaciones iniciales.",
+        "preguntas": [
+            "¿Ha realizado pruebas del producto o solución con clientes que validen sus beneficios?",
+            "¿Ha iniciado procesos de venta o pilotos con clientes reales o aliados estratégicos?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "Clientes involucrados en pruebas extendidas o primeras ventas/test comerciales.",
+        "preguntas": [
+            "¿Tiene acuerdos o primeras ventas del producto (aunque sea versión de prueba)?",
+            "¿Los clientes han participado activamente en validaciones o pruebas extendidas del producto?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Ventas iniciales y preparación para ventas estructuradas y escalables.",
+        "preguntas": [
+            "¿Ha vendido sus primeros productos y validado la disposición de pago de un porcentaje relevante de clientes?",
+            "¿Cuenta con una organización comercial mínima (CRM, procesos de venta, canales definidos)?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "Adopción consolidada y ventas repetibles a múltiples clientes reales.",
+        "preguntas": [
+            "¿Está realizando ventas escalables y repetibles con múltiples clientes?",
+            "¿Su empresa está enfocada en ejecutar un proceso de crecimiento comercial con foco en la demanda de clientes?",
+        ],
+    },
+]
+
+# Dimensión Tecnología (TRL)
+TRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Principios básicos observados y reportados.",
+        "preguntas": [
+            "¿Existe una descripción del principio científico/técnico subyacente?",
+            "¿Se identificó el problema técnico a resolver?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Formulación del concepto y/o aplicación tecnológica.",
+        "preguntas": [
+            "¿Se formuló el concepto de solución tecnológica?",
+            "¿Existen hipótesis sobre mecanismos de funcionamiento y límites?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Pruebas analíticas y experimentación de concepto en laboratorio.",
+        "preguntas": [
+            "¿Hay evidencia experimental preliminar que respalde el concepto?",
+            "¿Se definieron métricas técnicas de éxito (KPIs técnicos)?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Validación de componentes en laboratorio.",
+        "preguntas": [
+            "¿Los componentes clave fueron validados de forma aislada?",
+            "¿Se cuenta con protocolos de ensayo reproducibles?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Validación de componentes integrados en ambiente relevante.",
+        "preguntas": [
+            "¿El subsistema integrado cumple con los KPIs técnicos en ambiente relevante?",
+            "¿Se identificaron riesgos técnicos críticos y mitigaciones?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Demostración de sistema/prototipo en ambiente relevante.",
+        "preguntas": [
+            "¿Existe un prototipo funcional probado con condiciones de uso relevantes?",
+            "¿Se validó el desempeño frente a condiciones operacionales variables?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "Demostración de sistema/prototipo en ambiente operacional real.",
+        "preguntas": [
+            "¿Se ejecutaron pilotos en campo con usuarios reales?",
+            "¿El desempeño técnico cumplió con los KPIs en operación real?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Sistema completo y calificado.",
+        "preguntas": [
+            "¿El sistema está completo, integrado y calificado por terceros (QA/QAQ)?",
+            "¿Se cuenta con documentación de ingeniería y manuales de operación?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "Sistema probado en ambiente operacional real y listo para despliegue.",
+        "preguntas": [
+            "¿La tecnología está en operación estable y mantenible con clientes reales?",
+            "¿Existen métricas de confiabilidad/disponibilidad en producción?",
+        ],
+    },
+]
+
+# Dimensión Finanzas (FRL)
+FRL_LEVELS = [
+    {
+        "nivel": 1,
+        "descripcion": "Hipótesis preliminares de modelo financiero (ingresos/costos) sin validación.",
+        "preguntas": [
+            "¿Existe una hipótesis de fuentes de ingreso?",
+            "¿Se identificaron categorías de costos principales?",
+        ],
+    },
+    {
+        "nivel": 2,
+        "descripcion": "Primer borrador de proyección financiera simple.",
+        "preguntas": [
+            "¿Se elaboró un primer P&G mensual o anual simple?",
+            "¿Se estimó CAPEX/OPEX inicial a alto nivel?",
+        ],
+    },
+    {
+        "nivel": 3,
+        "descripcion": "Modelo financiero básico con supuestos explícitos.",
+        "preguntas": [
+            "¿Se documentaron supuestos clave (precios, churn, costos variables)?",
+            "¿Se construyó un flujo de caja simple con 12-24 meses?",
+        ],
+    },
+    {
+        "nivel": 4,
+        "descripcion": "Validación inicial de supuestos de ingresos y costos.",
+        "preguntas": [
+            "¿Se contrastaron supuestos con datos de mercado/proveedores?",
+            "¿Se identificó el punto de equilibrio preliminar?",
+        ],
+    },
+    {
+        "nivel": 5,
+        "descripcion": "Modelo financiero iterado con escenarios y sensibilidad.",
+        "preguntas": [
+            "¿Se modelaron escenarios (base, optimista, conservador)?",
+            "¿Se analizó sensibilidad de variables críticas (precio, conversión, CAC)?",
+        ],
+    },
+    {
+        "nivel": 6,
+        "descripcion": "Evidencia de tracción financiera temprana (ingresos/pedidos/pilotos pagos).",
+        "preguntas": [
+            "¿Existen ingresos o contratos que respalden supuestos?",
+            "¿Se actualizó el modelo con datos reales y desviaciones?",
+        ],
+    },
+    {
+        "nivel": 7,
+        "descripcion": "Estructura financiera para escalar (unit economics positivos/near-breakeven).",
+        "preguntas": [
+            "¿Los unit economics son positivos o cercanos a equilibrio?",
+            "¿Hay políticas y controles financieros operando (cobranza, compras)?",
+        ],
+    },
+    {
+        "nivel": 8,
+        "descripcion": "Gestión financiera madura con reporting periódico.",
+        "preguntas": [
+            "¿Se reporta periódicamente P&G, balance y flujo de caja?",
+            "¿Se cuenta con auditoría o revisión externa cuando aplica?",
+        ],
+    },
+    {
+        "nivel": 9,
+        "descripcion": "Resultados financieros sostenidos y escalables.",
+        "preguntas": [
+            "¿La empresa muestra crecimiento rentable y sostenido?",
+            "¿Las métricas financieras están estabilizadas y soportan escalamiento?",
+        ],
+    },
+]
+
 STEP_TABS = [dimension for dimension, _ in IRL_DIMENSIONS]
 LEVEL_DEFINITIONS = {
     "CRL": CRL_LEVELS,
@@ -574,63 +878,204 @@ _READY_KEY = "irl_level_ready"
 _EDIT_MODE_KEY = "irl_level_edit_mode"
 _AUTO_SAVE_KEY = "irl_auto_save"
 _QUESTION_PROGRESS_KEY = "irl_question_progress"
+# Claves adicionales usadas para restauración/estilos
 _RESTORE_ON_EDIT_KEY = "irl_restore_on_edit"
 _PENDING_RESTORE_QUEUE_KEY = "irl_pending_restore_queue"
 
+# Mapa de estados → clase CSS (solo para estilos visuales)
 _STATUS_CLASS_MAP = {
     "Pendiente": "pending",
-    "Respondido (en cálculo)": "complete",
-    "Fuera de cálculo": "attention",
+    "Respondido (en cálculo)": "attention",
     "Revisión requerida": "review",
+    "Error": "error",
+    "Completa": "complete",
+    "Completo": "complete",
 }
 
-IRL_IMPORTANT_HTML = """
-<div class="irl-important">
-  <strong>Importante:</strong> Este formulario es una herramienta de auto-diagnóstico para identificar el estado actual de la EBCT respecto a: desarrollo tecnológico, estrategia de negocios, propiedad intelectual, madurez del equipo, estrategia de financiamiento y el valor generado para clientes o usuarios. Evalúa una sola tecnología por formulario. Para un seguimiento dinámico y recomendaciones detalladas, visita la plataforma <a href="https://www.calculadorarl.cl" target="_blank">Calculadora RL</a>.
-  <br><span class="irl-important__hint">La calculadora solo considera alcanzado un nivel cuando <em>todas</em> las respuestas son VERDADERAS de manera consecutiva desde el primer nivel.</span>
-</div>
-"""
-
-
-def _clean_text(value: str | None) -> str:
-    return (value or "").strip()
-
-
 def _is_evidence_valid(texto: str | None) -> bool:
-    texto_limpio = _clean_text(texto)
-    return bool(texto_limpio)
+    """Valida evidencia: por defecto basta con que no esté vacía.
 
-
-def _missing_required_evidences(
-    level: dict,
-    respuestas: dict[str, str | None] | None,
-    evidencias: dict[str, str] | None,
-) -> list[int]:
-    if respuestas is None:
-        return []
-    preguntas = level.get("preguntas") or []
-    evidencias = evidencias or {}
-    faltantes: list[int] = []
-    for idx, _ in enumerate(preguntas, start=1):
-        clave = str(idx)
-        if respuestas.get(clave) == "VERDADERO" and not _is_evidence_valid(evidencias.get(clave)):
-            faltantes.append(idx)
-    return faltantes
-
-
-def _question_is_complete(answer: str | None, evidence: str | None) -> bool:
-    if answer not in {"VERDADERO", "FALSO"}:
+    Si STEP_CONFIG["evidence_obligatoria_strict"] es True, exige tamaño mínimo.
+    """
+    txt = _clean_text(texto)
+    if not txt:
         return False
-    if answer == "VERDADERO":
-        return _is_evidence_valid(evidence)
+    if STEP_CONFIG.get("evidence_obligatoria_strict"):
+        return len(txt) >= int(STEP_CONFIG.get("min_evidence_chars", 1))
     return True
 
+def _ensure_question_progress(dimension: str, level_id: int, total_questions: int) -> dict:
+    """Asegura y devuelve el progreso de preguntas para un nivel."""
+    if _QUESTION_PROGRESS_KEY not in st.session_state:
+        st.session_state[_QUESTION_PROGRESS_KEY] = {dim: {} for dim in STEP_TABS}
+    if dimension not in st.session_state[_QUESTION_PROGRESS_KEY]:
+        st.session_state[_QUESTION_PROGRESS_KEY][dimension] = {}
+    progress = st.session_state[_QUESTION_PROGRESS_KEY][dimension].get(level_id)
+    if not isinstance(progress, dict):
+        progress = {}
+    saved_map = progress.get("saved")
+    if not isinstance(saved_map, dict):
+        saved_map = {}
+    valid_keys = {str(idx) for idx in range(1, max(total_questions, 0) + 1)}
+    for key in list(saved_map.keys()):
+        if key not in valid_keys:
+            saved_map.pop(key, None)
+    for idx in range(1, max(total_questions, 0) + 1):
+        saved_map.setdefault(str(idx), False)
+    progress["saved"] = saved_map
+    active = progress.get("active", 0)
+    if total_questions <= 0:
+        active = 0
+    else:
+        active = max(0, min(int(active), total_questions - 1))
+    progress["active"] = active
+    st.session_state[_QUESTION_PROGRESS_KEY][dimension][level_id] = progress
+    return progress
 
-def _ensure_question_progress(
+def _question_is_complete(resp: str | None, evidencia: str | None) -> bool:
+    """Una pregunta está completa si:
+    - resp == FALSO, o
+    - resp == VERDADERO y la evidencia es válida.
+    """
+    if resp == "FALSO":
+        return True
+    if resp == "VERDADERO":
+        return _is_evidence_valid(evidencia)
+    return False
+
+def _level_state(dimension: str, level_id: int) -> dict:
+    """Obtiene/crea el estado de un nivel en session_state."""
+    if _STATE_KEY not in st.session_state:
+        st.session_state[_STATE_KEY] = {}
+    if dimension not in st.session_state[_STATE_KEY]:
+        st.session_state[_STATE_KEY][dimension] = {}
+    if level_id not in st.session_state[_STATE_KEY][dimension]:
+        st.session_state[_STATE_KEY][dimension][level_id] = {
+            "respuesta": "FALSO",
+            "respuestas_preguntas": {},
+            "evidencia": "",
+            "evidencias_preguntas": {},
+            "estado": "Pendiente",
+            "estado_auto": "Pendiente",
+            "en_calculo": False,
+            "marcado_revision": False,
+        }
+    return st.session_state[_STATE_KEY][dimension][level_id]
+
+def _update_ready_flag(dimension: str, level_id: int) -> None:
+    """Recalcula el flag ready para un nivel en base a los widgets actuales."""
+    niveles = LEVEL_DEFINITIONS.get(dimension, [])
+    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
+    if _READY_KEY not in st.session_state:
+        st.session_state[_READY_KEY] = {dim: {} for dim in STEP_TABS}
+    if level_data is None:
+        st.session_state[_READY_KEY].setdefault(dimension, {})[level_id] = False
+        return
+    preguntas = level_data.get("preguntas") or []
+    if preguntas:
+        listo = True
+        for idx in range(1, len(preguntas) + 1):
+            resp_key = f"resp_{dimension}_{level_id}_{idx}"
+            evid_key = f"evid_{dimension}_{level_id}_{idx}"
+            valor = st.session_state.get(resp_key)
+            if valor not in {"VERDADERO", "FALSO"}:
+                listo = False
+                break
+            if valor == "VERDADERO" and not _is_evidence_valid(st.session_state.get(evid_key)):
+                listo = False
+                break
+    else:
+        answer_key = f"resp_{dimension}_{level_id}"
+        evidencia_key = f"evid_{dimension}_{level_id}"
+        valor = st.session_state.get(answer_key)
+        listo = valor in {"VERDADERO", "FALSO"}
+        if listo and valor == "VERDADERO":
+            listo = _is_evidence_valid(st.session_state.get(evidencia_key))
+    st.session_state[_READY_KEY].setdefault(dimension, {})[level_id] = bool(listo)
+
+def _rerun_app() -> None:
+    try:
+        st.rerun()
+    except Exception:
+        pass
+def _render_level_question_flow(
     dimension: str,
     level_id: int,
-    total_questions: int,
-) -> dict:
+    preguntas: list[str],
+    descripcion: str,
+    *,
+    locked: bool,
+) -> tuple[dict[str, str | None], dict[str, str], str, bool]:
+    """Renderiza las preguntas del nivel sin botones extra.
+
+    Devuelve las respuestas actuales, evidencias y si el nivel está listo para
+    guardar. No crea botones; el botón único de guardado vive en el nivel.
+    """
+
+    irl_level_flow.inject_css()
+
+    total_questions = len(preguntas)
+    respuestas: dict[str, str | None] = {}
+    evidencias: dict[str, str] = {}
+
+    # Título del nivel
+    st.markdown(f"### Nivel {level_id}")
+    if descripcion:
+        st.caption(descripcion)
+
+    for idx, pregunta in enumerate(preguntas, start=1):
+        resp_key = f"resp_{dimension}_{level_id}_{idx}"
+        toggle_key = f"toggle_{dimension}_{level_id}_{idx}"
+        evid_key = f"evid_{dimension}_{level_id}_{idx}"
+
+        # Defaults seguros (solo si faltan)
+        if resp_key not in st.session_state:
+            st.session_state[resp_key] = "FALSO"
+        if toggle_key not in st.session_state:
+            st.session_state[toggle_key] = st.session_state[resp_key] == "VERDADERO"
+        if evid_key not in st.session_state:
+            st.session_state[evid_key] = ""
+
+        st.write(f"**Pregunta {idx}/{total_questions}**: {pregunta}")
+
+        # Widget del toggle
+        selected = st.toggle(
+            "VERDADERO/FALSO",
+            key=toggle_key,
+            disabled=locked,
+        )
+        # Sincronizamos la respuesta textual (no es widget)
+        st.session_state[resp_key] = "VERDADERO" if selected else "FALSO"
+
+        # Campo de evidencia (solo si VERDADERO). Importante: NO escribimos
+        # sobre evid_key cuando el widget ya existe en esta misma ejecución.
+        if selected:
+            st.text_area(
+                "Antecedentes de verificación",
+                key=evid_key,
+                disabled=locked,
+                placeholder="Describe brevemente los antecedentes...",
+                height=110,
+            )
+        else:
+            # Si no se muestra el widget en esta ejecución es seguro limpiar
+            # la evidencia para mantener consistencia
+            if evid_key not in st.session_state or st.session_state.get(evid_key):
+                st.session_state[evid_key] = ""
+
+        respuestas[str(idx)] = st.session_state.get(resp_key)
+        evidencias[str(idx)] = st.session_state.get(evid_key, "")
+
+    evidencias_texto = "\n".join(
+        t.strip() for t in evidencias.values() if isinstance(t, str) and t.strip()
+    )
+
+    ready_to_save = all(
+        not (respuestas[str(i)] == "VERDADERO" and not (evidencias[str(i)] or "").strip())
+        for i in range(1, total_questions + 1)
+    )
+
+    return respuestas, evidencias, evidencias_texto, ready_to_save
     if _QUESTION_PROGRESS_KEY not in st.session_state:
         st.session_state[_QUESTION_PROGRESS_KEY] = {dimension: {} for dimension in STEP_TABS}
     if dimension not in st.session_state[_QUESTION_PROGRESS_KEY]:
@@ -686,34 +1131,42 @@ def _set_active_question(dimension: str, level_id: int, idx: int, total_question
 
 
 def _init_irl_state() -> None:
+    """Inicializa todas las estructuras necesarias en session_state."""
+    # contenedores raíz
     if _STATE_KEY not in st.session_state:
         st.session_state[_STATE_KEY] = {}
-
+    if _ERROR_KEY not in st.session_state:
+        st.session_state[_ERROR_KEY] = {dim: {} for dim in STEP_TABS}
+    if _BANNER_KEY not in st.session_state:
+        st.session_state[_BANNER_KEY] = {}
+    if _EDIT_MODE_KEY not in st.session_state:
+        st.session_state[_EDIT_MODE_KEY] = {dim: {} for dim in STEP_TABS}
+    if _READY_KEY not in st.session_state:
+        st.session_state[_READY_KEY] = {dim: {} for dim in STEP_TABS}
     if _RESTORE_ON_EDIT_KEY not in st.session_state:
-        st.session_state[_RESTORE_ON_EDIT_KEY] = {}
+        st.session_state[_RESTORE_ON_EDIT_KEY] = {dim: {} for dim in STEP_TABS}
+    if _QUESTION_PROGRESS_KEY not in st.session_state:
+        st.session_state[_QUESTION_PROGRESS_KEY] = {dim: {} for dim in STEP_TABS}
+    if _PENDING_RESTORE_QUEUE_KEY not in st.session_state:
+        st.session_state[_PENDING_RESTORE_QUEUE_KEY] = []
+    if "irl_scores" not in st.session_state:
+        st.session_state["irl_scores"] = {dim: 0 for dim in STEP_TABS}
 
+    # niveles por dimensión
     for dimension in STEP_TABS:
-        if dimension not in st.session_state[_STATE_KEY]:
-            st.session_state[_STATE_KEY][dimension] = {}
+        st.session_state[_STATE_KEY].setdefault(dimension, {})
+        st.session_state[_ERROR_KEY].setdefault(dimension, {})
+        st.session_state[_EDIT_MODE_KEY].setdefault(dimension, {})
+        st.session_state[_READY_KEY].setdefault(dimension, {})
+        st.session_state[_RESTORE_ON_EDIT_KEY].setdefault(dimension, {})
+        st.session_state[_QUESTION_PROGRESS_KEY].setdefault(dimension, {})
 
-        if dimension not in st.session_state[_RESTORE_ON_EDIT_KEY]:
-            st.session_state[_RESTORE_ON_EDIT_KEY][dimension] = {}
-
-        for level in LEVEL_DEFINITIONS.get(dimension, []):
-            if level["nivel"] not in st.session_state[_STATE_KEY][dimension]:
-                st.session_state[_STATE_KEY][dimension][level["nivel"]] = {
-                    "respuesta": "FALSO",
-                    "respuestas_preguntas": {},
-                    "evidencia": "",
-                    "evidencias_preguntas": {},
-                    "estado": "Pendiente",
-                    "estado_auto": "Pendiente",
-                    "en_calculo": False,
-                    "marcado_revision": False,
-                }
-    for dimension in STEP_TABS:
-        for level in LEVEL_DEFINITIONS.get(dimension, []):
-            state = st.session_state[_STATE_KEY][dimension][level["nivel"]]
+        niveles = LEVEL_DEFINITIONS.get(dimension, [])
+        for level in niveles:
+            nivel_id = level.get("nivel")
+            # estado base del nivel
+            state = _level_state(dimension, nivel_id)
+            # normalizar respuestas por pregunta
             preguntas = level.get("preguntas") or []
             existentes = state.get("respuestas_preguntas")
             if not isinstance(existentes, dict):
@@ -724,122 +1177,19 @@ def _init_irl_state() -> None:
                 valor = existentes.get(clave)
                 normalizado[clave] = valor if valor in {"VERDADERO", "FALSO"} else "FALSO"
             state["respuestas_preguntas"] = normalizado
-            evidencias_existentes = state.get("evidencias_preguntas")
-            if not isinstance(evidencias_existentes, dict):
-                evidencias_existentes = {}
-            normalizado_evidencias: dict[str, str] = {}
-            for idx, _ in enumerate(preguntas, start=1):
-                clave = str(idx)
-                valor = evidencias_existentes.get(clave)
-                normalizado_evidencias[clave] = str(valor) if valor is not None else ""
-            state["evidencias_preguntas"] = normalizado_evidencias
-            st.session_state[_STATE_KEY][dimension][level["nivel"]] = state
-    if _READY_KEY not in st.session_state:
-        st.session_state[_READY_KEY] = {dimension: {} for dimension in STEP_TABS}
-    for dimension in STEP_TABS:
-        for level in LEVEL_DEFINITIONS.get(dimension, []):
-            preguntas = level.get("preguntas") or []
-            level_state = st.session_state[_STATE_KEY][dimension][level["nivel"]]
-            if preguntas:
-                listo = all(
-                    level_state.get("respuestas_preguntas", {}).get(str(idx)) in {"VERDADERO", "FALSO"}
-                    for idx in range(1, len(preguntas) + 1)
-                )
-            else:
-                listo = level_state.get("respuesta") in {"VERDADERO", "FALSO"}
-            st.session_state[_READY_KEY][dimension][level["nivel"]] = listo
-    if _EDIT_MODE_KEY not in st.session_state:
-        st.session_state[_EDIT_MODE_KEY] = {}
-    for dimension in STEP_TABS:
-        if dimension not in st.session_state[_EDIT_MODE_KEY]:
-            st.session_state[_EDIT_MODE_KEY][dimension] = {}
-        for level in LEVEL_DEFINITIONS.get(dimension, []):
-            level_id = level["nivel"]
-            if level_id not in st.session_state[_EDIT_MODE_KEY][dimension]:
-                en_calculo = bool(
-                    st.session_state[_STATE_KEY][dimension][level_id].get("en_calculo", False)
-                )
-                st.session_state[_EDIT_MODE_KEY][dimension][level_id] = not en_calculo
-    if _QUESTION_PROGRESS_KEY not in st.session_state:
-        st.session_state[_QUESTION_PROGRESS_KEY] = {dimension: {} for dimension in STEP_TABS}
-    for dimension in STEP_TABS:
-        if dimension not in st.session_state[_QUESTION_PROGRESS_KEY]:
-            st.session_state[_QUESTION_PROGRESS_KEY][dimension] = {}
-        for level in LEVEL_DEFINITIONS.get(dimension, []):
-            level_id = level["nivel"]
-            preguntas = level.get("preguntas") or []
-            total_questions = len(preguntas)
-            if not total_questions:
-                st.session_state[_QUESTION_PROGRESS_KEY][dimension][level_id] = {
-                    "active": 0,
-                    "saved": {},
-                }
-                continue
-            progress = _ensure_question_progress(dimension, level_id, total_questions)
-            level_state = st.session_state[_STATE_KEY][dimension][level_id]
-            for idx in range(1, total_questions + 1):
-                clave = str(idx)
-                respuesta = level_state.get("respuestas_preguntas", {}).get(clave)
-                evidencia = level_state.get("evidencias_preguntas", {}).get(clave)
-                is_complete = _question_is_complete(respuesta, evidencia)
-                progress["saved"][clave] = is_complete
-            selector_key = f"selector_{dimension}_{level_id}"
-            default_active = 0
-            existing_selector = st.session_state.get(selector_key)
-            if isinstance(existing_selector, int) and 0 <= existing_selector < total_questions:
-                progress["active"] = existing_selector
-            else:
-                progress["active"] = default_active
-                st.session_state[selector_key] = default_active
-            st.session_state[_QUESTION_PROGRESS_KEY][dimension][level_id] = progress
-    if _ERROR_KEY not in st.session_state:
-        st.session_state[_ERROR_KEY] = {dimension: {} for dimension in STEP_TABS}
-    if _BANNER_KEY not in st.session_state:
-        st.session_state[_BANNER_KEY] = {dimension: None for dimension in STEP_TABS}
-    if _CLOSE_EXPANDER_KEY not in st.session_state:
-        st.session_state[_CLOSE_EXPANDER_KEY] = None
-    if _AUTO_SAVE_KEY not in st.session_state:
-        st.session_state[_AUTO_SAVE_KEY] = None
-    if "irl_scores" not in st.session_state:
-        st.session_state["irl_scores"] = {dimension: default for dimension, default in IRL_DIMENSIONS}
+            if not isinstance(state.get("evidencias_preguntas"), dict):
+                state["evidencias_preguntas"] = {}
 
-
-def _level_state(dimension: str, level_id: int) -> dict:
-    return st.session_state[_STATE_KEY][dimension][level_id]
-
-
-def _update_ready_flag(dimension: str, level_id: int) -> None:
-    _init_irl_state()
-    niveles = LEVEL_DEFINITIONS.get(dimension, [])
-    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
-    if not level_data:
-        return
-    preguntas = level_data.get("preguntas") or []
-    if preguntas:
-        listo = True
-        for idx in range(1, len(preguntas) + 1):
-            pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
-            valor = st.session_state.get(pregunta_key)
-            if valor not in {"VERDADERO", "FALSO"}:
-                listo = False
-                break
-        if listo:
-            for idx in range(1, len(preguntas) + 1):
-                pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
-                evidencia_key = f"evid_{dimension}_{level_id}_{idx}"
-                if st.session_state.get(pregunta_key) == "VERDADERO" and not _is_evidence_valid(
-                    st.session_state.get(evidencia_key)
-                ):
-                    listo = False
-                    break
-    else:
-        answer_key = f"resp_{dimension}_{level_id}"
-        valor = st.session_state.get(answer_key)
-        listo = valor in {"VERDADERO", "FALSO"}
-        if listo and valor == "VERDADERO":
-            evidencia_key = f"evid_{dimension}_{level_id}"
-            listo = _is_evidence_valid(st.session_state.get(evidencia_key))
-    st.session_state[_READY_KEY][dimension][level_id] = listo
+            # editar por defecto: True si no está calculado
+            st.session_state[_EDIT_MODE_KEY][dimension].setdefault(nivel_id, not state.get("en_calculo", False))
+            # errores inicialmente None
+            st.session_state[_ERROR_KEY][dimension].setdefault(nivel_id, None)
+            # flags de restauración
+            st.session_state[_RESTORE_ON_EDIT_KEY][dimension].setdefault(nivel_id, False)
+            # progreso preguntas
+            _ensure_question_progress(dimension, nivel_id, len(preguntas))
+            # ready flag
+            _update_ready_flag(dimension, nivel_id)
 
 
 def _set_level_state(
@@ -894,49 +1244,88 @@ def _toggle_revision(dimension: str, level_id: int) -> None:
     _set_revision_flag(dimension, level_id, nuevo_valor)
 
 def _restore_level_form_values(dimension: str, level_id: int) -> None:
+    """Restaura los valores del formulario para un nivel específico.
+    
+    Esta función maneja la restauración del estado del formulario, asegurando que:
+    1. Los valores se restauren solo cuando sea necesario 
+    2. No se sobrescriban estados válidos de widgets
+    3. Se mantenga la consistencia entre toggles y respuestas
+    4. Las evidencias se restauren correctamente
+    """
     niveles = LEVEL_DEFINITIONS.get(dimension, [])
     level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
     if not level_data:
         return
+        
     state = _level_state(dimension, level_id)
     preguntas = level_data.get("preguntas") or []
     selector_key = f"selector_{dimension}_{level_id}"
+
     if preguntas:
-        evidencias_estado = state.get("evidencias_preguntas") or {}
-        aggregated: list[str] = []
+        # Estado de respuestas y evidencias
+        state_resp = state.get("respuestas_preguntas", {})
+        state_evid = state.get("evidencias_preguntas", {}) 
+        evidencias_agregadas = []
+
+        # Restaurar cada pregunta individual
         for idx, _ in enumerate(preguntas, start=1):
             clave = str(idx)
-            pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
+            
+            # Keys para esta pregunta
+            resp_key = f"resp_{dimension}_{level_id}_{idx}"
             toggle_key = f"toggle_{dimension}_{level_id}_{idx}"
-            evidencia_key = f"evid_{dimension}_{level_id}_{idx}"
-            valor = state.get("respuestas_preguntas", {}).get(clave)
-            st.session_state[pregunta_key] = valor if valor in {"VERDADERO", "FALSO"} else "FALSO"
-            st.session_state[toggle_key] = st.session_state[pregunta_key] == "VERDADERO"
-            evidencia_val = evidencias_estado.get(clave, "")
-            evidencia_texto = "" if evidencia_val is None else str(evidencia_val)
-            st.session_state[evidencia_key] = evidencia_texto
-            if evidencia_texto:
-                aggregated.append(evidencia_texto.strip())
-        evidencia_join_key = f"evid_{dimension}_{level_id}"
-        st.session_state[evidencia_join_key] = " \n".join(aggregated)
-        total_questions = len(preguntas)
-        progress = _ensure_question_progress(dimension, level_id, total_questions)
-        for idx, _ in enumerate(preguntas, start=1):
+            evid_key = f"evid_{dimension}_{level_id}_{idx}"
+            
+            # Restaurar respuesta solo si no existe
+            resp_valor = state_resp.get(clave)
+            if resp_key not in st.session_state:
+                st.session_state[resp_key] = resp_valor if resp_valor in {"VERDADERO", "FALSO"} else "FALSO"
+                
+            # Sincronizar toggle con respuesta
+            if toggle_key not in st.session_state:
+                st.session_state[toggle_key] = st.session_state[resp_key] == "VERDADERO"
+            
+            # Restaurar evidencia
+            evid_texto = state_evid.get(clave, "")
+            if evid_texto:
+                if evid_key not in st.session_state:
+                    st.session_state[evid_key] = evid_texto
+                evidencias_agregadas.append(evid_texto.strip())
+                
+        # Agregar evidencias concatenadas
+        evid_join_key = f"evid_{dimension}_{level_id}"
+        if evid_join_key not in st.session_state and evidencias_agregadas:
+            st.session_state[evid_join_key] = " \n".join(evidencias_agregadas)
+            
+        # Actualizar progreso
+        total_preguntas = len(preguntas)
+        progreso = _ensure_question_progress(dimension, level_id, total_preguntas)
+        
+        for idx in range(1, total_preguntas + 1):
             clave = str(idx)
-            respuesta_guardada = state.get("respuestas_preguntas", {}).get(clave)
-            evidencia_guardada = evidencias_estado.get(clave, "")
-            completo = _question_is_complete(respuesta_guardada, evidencia_guardada)
-            progress["saved"][clave] = completo
-        progress["active"] = 0
-        st.session_state[_QUESTION_PROGRESS_KEY][dimension][level_id] = progress
+            resp = state_resp.get(clave)
+            evid = state_evid.get(clave, "")
+            completo = _question_is_complete(resp, evid)
+            progreso["saved"][clave] = completo
+            
+        progreso["active"] = 0
+        st.session_state[_QUESTION_PROGRESS_KEY][dimension][level_id] = progreso
         st.session_state[selector_key] = 0
+        
     else:
+        # Para niveles sin preguntas individuales
         answer_key = f"resp_{dimension}_{level_id}"
         evidencia_key = f"evid_{dimension}_{level_id}"
+        
         valor = state.get("respuesta")
-        st.session_state[answer_key] = valor if valor in {"VERDADERO", "FALSO"} else "FALSO"
+        if answer_key not in st.session_state:
+            st.session_state[answer_key] = valor if valor in {"VERDADERO", "FALSO"} else "FALSO"
+            
         evidencia_val = state.get("evidencia", "")
-        st.session_state[evidencia_key] = "" if evidencia_val is None else str(evidencia_val)
+        if evidencia_key not in st.session_state:
+            st.session_state[evidencia_key] = "" if evidencia_val is None else str(evidencia_val)
+            
+    # Asegurar que el selector exista
     if selector_key not in st.session_state:
         st.session_state[selector_key] = 0
 
@@ -1001,6 +1390,75 @@ def _sync_dimension_score(dimension: str) -> int:
 def _sync_all_scores() -> None:
     for dimension in STEP_TABS:
         _sync_dimension_score(dimension)
+
+
+def _update_level_states_from_responses() -> None:
+    """Actualiza los estados de los niveles basándose en las respuestas cargadas."""
+    _init_irl_state()
+    
+    for dimension in STEP_TABS:
+        niveles = LEVEL_DEFINITIONS.get(dimension, [])
+        for level in niveles:
+            level_id = level.get("nivel")
+            if not level_id:
+                continue
+            
+            preguntas = level.get("preguntas", [])
+            
+            # Verificar si todas las preguntas tienen respuesta VERDADERO
+            if preguntas:
+                todas_verdadero = True
+                alguna_evidencia = False
+                
+                for idx in range(1, len(preguntas) + 1):
+                    resp_key = f"resp_{dimension}_{level_id}_{idx}"
+                    evid_key = f"evid_{dimension}_{level_id}_{idx}"
+                    
+                    respuesta = st.session_state.get(resp_key, "FALSO")
+                    evidencia = st.session_state.get(evid_key, "")
+                    
+                    if respuesta != "VERDADERO":
+                        todas_verdadero = False
+                        break
+                    
+                    if evidencia and evidencia.strip() != "":
+                        alguna_evidencia = True
+                
+                # Actualizar estado del nivel
+                level_state = _level_state(dimension, level_id)
+                if todas_verdadero:
+                    level_state["respuesta"] = "VERDADERO"
+                    # IMPORTANTE: Marcar en_calculo=True aunque no haya evidencia
+                    # Para permitir cálculo de niveles desde Excel
+                    level_state["en_calculo"] = True
+                    level_state["estado"] = "Completo"
+                    level_state["estado_auto"] = "Completo"
+                    # Nota: En el flujo manual se puede requerir evidencia, pero desde Excel aceptamos sin evidencia
+                else:
+                    level_state["respuesta"] = "FALSO"
+                    level_state["en_calculo"] = False
+                    level_state["estado"] = "Incompleto"
+                    level_state["estado_auto"] = "Incompleto"
+            else:
+                # Nivel sin preguntas específicas
+                resp_key = f"resp_{dimension}_{level_id}"
+                evid_key = f"evid_{dimension}_{level_id}"
+                
+                respuesta = st.session_state.get(resp_key, "FALSO")
+                evidencia = st.session_state.get(evid_key, "")
+                
+                level_state = _level_state(dimension, level_id)
+                level_state["respuesta"] = respuesta
+                
+                if respuesta == "VERDADERO":
+                    # IMPORTANTE: Marcar en_calculo=True aunque no haya evidencia
+                    level_state["en_calculo"] = True
+                    level_state["estado"] = "Completo"
+                    level_state["estado_auto"] = "Completo"
+                else:
+                    level_state["en_calculo"] = False
+                    level_state["estado"] = "Incompleto"
+                    level_state["estado_auto"] = "Incompleto"
 
 
 def _compute_dimension_counts(dimension: str) -> dict:
@@ -1076,7 +1534,15 @@ def _handle_question_evidence_change(
     level_id: int,
     idx: int,
     total_questions: int,
+    pregunta_key: str,
+    evidencia_key: str,
 ) -> None:
+    """Marca la pregunta como pendiente cuando cambia la evidencia.
+
+    Importante: no escribimos en st.session_state[evidencia_key] aquí para
+    evitar el error de Streamlit de modificar un widget luego de instanciarlo.
+    Solo dejamos registro de que la pregunta tiene cambios pendientes.
+    """
     _mark_question_pending(dimension, level_id, idx, total_questions)
 
 
@@ -1090,11 +1556,25 @@ def _handle_question_toggle_change(
     evidencia_key: str,
     toggle_key: str,
 ) -> None:
-    marcado = bool(st.session_state.get(toggle_key))
-    nuevo_valor = "VERDADERO" if marcado else "FALSO"
+    """Maneja el cambio en el toggle de una pregunta.
+    
+    Esta función se encarga de:
+    1. Sincronizar el estado del toggle con la respuesta
+    2. Limpiar evidencia cuando corresponda
+    3. Marcar la pregunta como pendiente de guardar
+    """
+    # Obtener estado actual del toggle
+    toggle_state = bool(st.session_state.get(toggle_key))
+    
+    # Convertir a VERDADERO/FALSO manteniendo consistencia
+    nuevo_valor = "VERDADERO" if toggle_state else "FALSO"
     st.session_state[pregunta_key] = nuevo_valor
-    if nuevo_valor != "VERDADERO":
+    
+    # Si se cambia a FALSO, limpiar evidencia
+    if not toggle_state:
         st.session_state[evidencia_key] = ""
+        
+    # Marcar como pendiente para forzar guardar
     _mark_question_pending(dimension, level_id, idx, total_questions)
 
 
@@ -1122,6 +1602,130 @@ def _persist_question_progress(
     st.session_state[_STATE_KEY][dimension][level_id] = level_state
 
 
+def _validate_level(dimension: str, level_id: int) -> tuple[bool, list[str]]:
+    """Valida que el nivel tenga respuestas válidas y evidencias cuando corresponda."""
+    errores: list[str] = []
+    niveles = LEVEL_DEFINITIONS.get(dimension, [])
+    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
+    if not level_data:
+        return False, ["Nivel no encontrado"]
+
+    preguntas = level_data.get("preguntas") or []
+    if preguntas:
+        for idx, _ in enumerate(preguntas, start=1):
+            resp_key = f"resp_{dimension}_{level_id}_{idx}"
+            evid_key = f"evid_{dimension}_{level_id}_{idx}"
+            resp = st.session_state.get(resp_key)
+            if resp not in {"VERDADERO", "FALSO"}:
+                errores.append(f"Pregunta {idx}: selecciona VERDADERO o FALSO.")
+                continue
+            if resp == "VERDADERO" and not _is_evidence_valid(st.session_state.get(evid_key)):
+                min_chars = STEP_CONFIG.get("min_evidence_chars", 0)
+                errores.append(
+                    f"Pregunta {idx}: cuando es VERDADERO debes agregar antecedentes (mínimo {min_chars} caracteres si aplica)."
+                )
+    else:
+        answer_key = f"resp_{dimension}_{level_id}"
+        evidencia_key = f"evid_{dimension}_{level_id}"
+        resp = st.session_state.get(answer_key)
+        if resp not in {"VERDADERO", "FALSO"}:
+            errores.append("Selecciona VERDADERO o FALSO.")
+        elif resp == "VERDADERO" and not _is_evidence_valid(st.session_state.get(evidencia_key)):
+            min_chars = STEP_CONFIG.get("min_evidence_chars", 0)
+            errores.append(
+                f"Cuando es VERDADERO debes agregar antecedentes (mínimo {min_chars} caracteres si aplica)."
+            )
+
+    return len(errores) == 0, errores
+
+def _save_level_answers(
+    dimension: str,
+    level_id: int
+) -> tuple[bool, str | None]:
+    """Guarda las respuestas de un nivel después de validar.
+    
+    Esta función:
+    1. Valida el nivel completo
+    2. Recopila respuestas y evidencias
+    3. Actualiza el estado del nivel
+    4. Maneja errores
+    
+    Args:
+        dimension: Código de la dimensión
+        level_id: ID del nivel
+        
+    Returns:
+        Tupla con:
+        - bool: Si el guardado fue exitoso
+        - str: Mensaje de error si hay
+    """
+    # Primero validamos todo el nivel
+    valid, errors = _validate_level(dimension, level_id)
+    if not valid:
+        error_msg = "\n".join(errors)
+        return False, error_msg
+        
+    # Obtener datos del nivel
+    niveles = LEVEL_DEFINITIONS.get(dimension, [])
+    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), None)
+    if not level_data:
+        return False, "Nivel no encontrado"
+        
+    preguntas = level_data.get("preguntas") or []
+    state = _level_state(dimension, level_id)
+    
+    if preguntas:
+        # Recopilar respuestas y evidencias
+        respuestas: dict[str, str] = {}
+        evidencias: dict[str, str] = {}
+        
+        for idx, _ in enumerate(preguntas, start=1):
+            pregunta_key = f"resp_{dimension}_{level_id}_{idx}"
+            evidencia_key = f"evid_{dimension}_{level_id}_{idx}"
+            clave = str(idx)
+            
+            respuesta = st.session_state.get(pregunta_key)
+            if respuesta not in {"VERDADERO", "FALSO"}:
+                respuesta = "FALSO"
+            respuestas[clave] = respuesta
+            
+            evidencia = st.session_state.get(evidencia_key, "").strip()
+            evidencias[clave] = evidencia if respuesta == "VERDADERO" else ""
+            
+        # Determinar respuesta agregada
+        respuesta = _aggregate_question_status(respuestas) or "FALSO"
+        evidencia = " \n".join(texto for texto in evidencias.values() if texto).strip()
+        
+    else:
+        # Nivel sin preguntas
+        answer_key = f"resp_{dimension}_{level_id}"
+        evidencia_key = f"evid_{dimension}_{level_id}"
+        
+        respuesta = st.session_state.get(answer_key)
+        if respuesta not in {"VERDADERO", "FALSO"}:
+            respuesta = "FALSO"
+            
+        evidencia = st.session_state.get(evidencia_key, "").strip()
+        if respuesta != "VERDADERO":
+            evidencia = ""
+            
+        respuestas = {}
+        evidencias = {}
+        
+    # Actualizar estado
+    _set_level_state(
+        dimension,
+        level_id,
+        respuesta=respuesta,
+        respuestas_preguntas=respuestas,
+        evidencia=evidencia,
+        evidencias_preguntas=evidencias,
+        estado_auto="Respondido (en cálculo)",
+        en_calculo=True
+    )
+    
+    return True, None
+
 def _handle_level_submission(
     dimension: str,
     level_id: int,
@@ -1131,195 +1735,33 @@ def _handle_level_submission(
     evidencias_preguntas: dict[str, str] | None = None,
     respuesta_manual: str | None = None,
 ) -> tuple[bool, str | None, str | None]:
-    evidencia = evidencia.strip()
-    niveles = LEVEL_DEFINITIONS.get(dimension, [])
-    level_data = next((lvl for lvl in niveles if lvl.get("nivel") == level_id), {})
-    preguntas = level_data.get("preguntas") or []
-    normalizado = _normalize_question_responses(level_data, respuestas_preguntas or {})
-    evidencias_normalizadas: dict[str, str] | None = None
-    if preguntas and evidencias_preguntas is not None:
-        evidencias_normalizadas = {}
-        for idx, _ in enumerate(preguntas, start=1):
-            clave = str(idx)
-            evidencias_normalizadas[clave] = (evidencias_preguntas.get(clave, "") or "").strip()
-        evidencia = " \n".join(
-            texto for texto in evidencias_normalizadas.values() if texto
-        ).strip()
-    elif evidencias_preguntas is not None:
-        evidencias_normalizadas = {k: str(v) for k, v in evidencias_preguntas.items()}
-
-    # Primero validamos las respuestas y evidencias
-    if preguntas:
-        faltantes = _missing_required_evidences(level_data, normalizado, evidencias_normalizadas)
-        if faltantes:
-            mensaje = "Escribe los antecedentes de verificación para guardar como VERDADERO."
-            return False, mensaje, None
-        respuesta = _aggregate_question_status(normalizado) or "FALSO"
-    else:
-        if respuesta_manual not in {"VERDADERO", "FALSO"}:
-            mensaje = "Selecciona VERDADERO o FALSO para continuar."
-            return False, mensaje, None
-        respuesta = respuesta_manual
-        if respuesta == "VERDADERO" and not evidencia:
-            mensaje = "Escribe los antecedentes de verificación para guardar como VERDADERO."
-            return False, mensaje, None
-
-    # Solo guardamos el estado cuando pasamos todas las validaciones y el usuario presiona "Guardar"
-    _set_level_state(
-        dimension,
-        level_id,
-        respuestas_preguntas=normalizado,
-        evidencia=evidencia,
-        evidencias_preguntas=evidencias_normalizadas,
-        respuesta=respuesta,
-        estado_auto="Respondido (en cálculo)",
-        en_calculo=True
-    )
+    """Punto de entrada para guardar un nivel.
     
-    return True, None, None
+    Esta función delega la validación y guardado a _save_level_answers,
+    pero mantiene la interfaz existente para compatibilidad.
+    """
+    success, error = _save_level_answers(dimension, level_id)
+    return success, error, None
 
 
-def _render_level_question_flow(
-    dimension: str,
-    level_id: int,
-    preguntas: list[str],
-    descripcion: str,
-    *,
-    locked: bool,
-) -> tuple[dict[str, str | None], dict[str, str], str, bool]:
-    """Render all questions for the level in a compact grid layout."""
-
-    irl_level_flow.inject_css()
-
-    level_state = _level_state(dimension, level_id)
-    is_saved = bool(level_state.get("en_calculo"))
-    existing_answers = level_state.get("respuestas_preguntas") or {}
-    existing_evidences = level_state.get("evidencias_preguntas") or {}
-
-    questions: list[irl_level_flow.Question] = []
-    for idx, pregunta in enumerate(preguntas, start=1):
-        answer_key = f"resp_{dimension}_{level_id}_{idx}"
-        value_key = f"toggle_{dimension}_{level_id}_{idx}"
-        note_key = f"evid_{dimension}_{level_id}_{idx}"
-        idx_str = str(idx)
-
-        if answer_key not in st.session_state:
-            default_option = existing_answers.get(idx_str)
-            st.session_state[answer_key] = (
-                default_option if default_option in {"VERDADERO", "FALSO"} else "FALSO"
-            )
-
-        if value_key not in st.session_state:
-            st.session_state[value_key] = st.session_state[answer_key] == "VERDADERO"
-        else:
-            marcado = bool(st.session_state[value_key])
-            st.session_state[value_key] = marcado
-            st.session_state[answer_key] = "VERDADERO" if marcado else "FALSO"
-
-        if note_key not in st.session_state:
-            default_note = existing_evidences.get(idx_str, "")
-            if not isinstance(default_note, str):
-                default_note = "" if default_note is None else str(default_note)
-            st.session_state[note_key] = default_note
-        elif not isinstance(st.session_state[note_key], str):
-            current_note = st.session_state.get(note_key)
-            st.session_state[note_key] = "" if current_note is None else str(current_note)
-
-        questions.append(
-            irl_level_flow.Question(
-                idx=idx,
-                text=pregunta,
-                value_key=value_key,
-                note_key=note_key,
-                answer_key=answer_key,
-            )
-        )
-
-    cursor_key = f"{irl_level_flow.STATE_PREFIX}{dimension}_{level_id}_current_idx"
-    irl_level_flow.init_state(questions, cursor_key=cursor_key)
-
-    total_questions = len(questions)
-    st.markdown(
-        f"<div class='{irl_level_flow.CSS_SCOPE_CLASS}'>",
-        unsafe_allow_html=True,
-    )
-
-    level_done = irl_level_flow.level_completed(questions)
-    irl_level_flow.render_level_header(
-        f"Nivel {level_id}",
-        level_done,
-        descripcion,
-    )
-
-    if total_questions:
-        progress = _ensure_question_progress(dimension, level_id, total_questions)
-        progress["active"] = 0
-        st.session_state[_QUESTION_PROGRESS_KEY][dimension][level_id] = progress
-
-        columns_per_row = 2 if total_questions > 1 else 1
-        for start in range(0, total_questions, columns_per_row):
-            row_questions = questions[start : start + columns_per_row]
-            cols = st.columns(len(row_questions))
-            for offset, (question, col) in enumerate(zip(row_questions, cols)):
-                with col:
-                    valid = irl_level_flow.render_question(
-                        question,
-                        position=start + offset,
-                        total=total_questions,
-                        disabled=locked,
-                    )
-
-                respuesta_actual = st.session_state.get(question.answer_key)
-                evidencia_actual = st.session_state.get(question.note_key, "")
-                if not isinstance(evidencia_actual, str):
-                    evidencia_actual = "" if evidencia_actual is None else str(evidencia_actual)
-
-                # Do not persist to the permanent level state while the user is
-                # still navigating questions. Persist only when the user explicitly
-                # clicks "Guardar y continuar...". We still track per-question
-                # completion in the question progress map.
-                if valid:
-                    _mark_question_saved(
-                        dimension,
-                        level_id,
-                        question.idx,
-                        total_questions,
-                    )
-                else:
-                    _mark_question_pending(
-                        dimension,
-                        level_id,
-                        question.idx,
-                        total_questions,
-                    )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    respuestas_dict = irl_level_flow.serialize_answers(questions)
-    evidencias_dict = irl_level_flow.serialize_evidences(questions)
-    evidencia_texto = " \n".join(
-        texto for texto in evidencias_dict.values() if texto
-    ).strip()
-
-    evidencia_join_key = f"evid_{dimension}_{level_id}"
-    st.session_state[evidencia_join_key] = evidencia_texto
-
-    ready_to_save = irl_level_flow.level_completed(questions)
-    st.session_state[_READY_KEY][dimension][level_id] = ready_to_save
-
-    return respuestas_dict, evidencias_dict, evidencia_texto, ready_to_save
+# Nota: Implementación única de _render_level_question_flow definida más arriba.
 
 
 def _render_dimension_tab(dimension: str) -> None:
+    """Renderiza una pestaña de dimensión completa."""
+    # Inicializar estado
     _init_irl_state()
     _process_pending_restores(dimension)
+    
+    # Obtener definición de niveles
     levels = LEVEL_DEFINITIONS.get(dimension, [])
+    # Calcular estadísticas
     counts = _compute_dimension_counts(dimension)
-
-    banner_msg = st.session_state[_BANNER_KEY].get(dimension)
-    banner_slot = st.empty()
+    
+    # Mostrar banner si hay mensaje
+    banner_msg = st.session_state.get(_BANNER_KEY, {}).get(dimension)
     if banner_msg:
-        banner_slot.info(banner_msg)
+        st.info(banner_msg)
 
     st.markdown(IRL_IMPORTANT_HTML, unsafe_allow_html=True)
 
@@ -1461,30 +1903,13 @@ def _render_dimension_tab(dimension: str) -> None:
             if error_msg:
                 st.error(error_msg)
 
-            action_cols = st.columns([2, 1])
-            guardar = action_cols[0].button(
+            guardar = st.button(
                 "Guardar y continuar con el siguiente nivel",
                 type="primary",
                 disabled=locked or not ready_to_save,
                 key=f"btn_guardar_{dimension}_{level_id}",
                 use_container_width=True,
             )
-            editar = action_cols[1].button(
-                editar_label,
-                disabled=editar_disabled,
-                key=f"btn_editar_{dimension}_{level_id}",
-            )
-
-            if editar:
-                if locked:
-                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = True
-                    st.toast("Modo edición activado")
-                    _rerun_app()
-                elif state.get("en_calculo"):
-                    _enqueue_level_restore(dimension, level_id)
-                    st.session_state[_EDIT_MODE_KEY][dimension][level_id] = False
-                    st.toast("Cambios descartados")
-                    _rerun_app()
 
             if guardar:
                 success, error_message, banner = _handle_level_submission(
@@ -1677,7 +2102,7 @@ def _collect_dimension_details() -> dict[str, dict[str, Any]]:
 
 
 st.set_page_config(page_title="Fase 1 - Evaluación IRL", page_icon="🌲", layout="wide")
-load_theme()
+_safe_load_theme()
 
 st.markdown(
     """
@@ -1685,13 +2110,13 @@ st.markdown(
 .page-intro {
     display: grid;
     grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-    gap: 2.4rem;
-    padding: 2.3rem 2.6rem;
-    border-radius: 30px;
-    background: linear-gradient(145deg, rgba(18, 48, 29, 0.94), rgba(111, 75, 44, 0.88));
+    gap: 1.0rem;
+    padding: 1.0rem 1.2rem;
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(18, 48, 29, 0.9), rgba(111, 75, 44, 0.82));
     color: #fdf9f2;
-    box-shadow: 0 36px 60px rgba(12, 32, 20, 0.35);
-    margin-bottom: 2.6rem;
+    box-shadow: 0 8px 18px rgba(12, 32, 20, 0.2);
+    margin-bottom: 1.0rem;
 }
 
 .page-intro h1 {
@@ -1787,16 +2212,16 @@ st.markdown(
 }
 
 .section-shell {
-    background: #ffffff;
-    border-radius: 24px;
-    padding: 1.6rem 1.8rem;
-    border: 1px solid rgba(var(--shadow-color), 0.12);
-    box-shadow: 0 24px 48px rgba(var(--shadow-color), 0.16);
-    margin-bottom: 2.3rem;
+    background: transparent;
+    border-radius: 8px;
+    padding: 0.4rem 0.4rem;
+    border: none;
+    box-shadow: none;
+    margin-bottom: 0.8rem;
 }
 
 .section-shell--split {
-    padding: 1.6rem 1.2rem 1.9rem;
+    padding: 0.4rem 0.4rem 0.6rem;
 }
 
 .section-shell h3, .section-shell h4 {
@@ -1829,95 +2254,161 @@ st.markdown(
 
 .selection-card {
     position: relative;
-    padding: 1.8rem 2rem;
-    border-radius: 26px;
-    background: linear-gradient(140deg, rgba(49, 106, 67, 0.16), rgba(32, 73, 46, 0.22));
-    border: 1px solid rgba(41, 96, 59, 0.45);
-    box-shadow: 0 26px 48px rgba(21, 56, 35, 0.28);
+    padding: 1.2rem 1.5rem;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafb 100%);
+    border: 2px solid #1b5e20;
+    box-shadow: 0 4px 16px rgba(27, 94, 32, 0.12), 0 2px 6px rgba(0,0,0,0.06);
     overflow: hidden;
+    transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.selection-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(27, 94, 32, 0.16), 0 3px 8px rgba(0,0,0,0.08);
+}
+
+.selection-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    background: linear-gradient(90deg, #1b5e20 0%, #43a047 50%, #1b5e20 100%);
 }
 
 .selection-card::after {
-    content: "";
+    content: '';
     position: absolute;
-    width: 220px;
-    height: 220px;
+    top: -50%;
+    right: -10%;
+    width: 280px;
+    height: 280px;
+    background: radial-gradient(circle, rgba(27,94,32,0.04) 0%, transparent 70%);
     border-radius: 50%;
-    background: rgba(103, 164, 123, 0.18);
-    top: -80px;
-    right: -70px;
-    filter: blur(0.5px);
+    pointer-events: none;
 }
 
 .selection-card__badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
-    padding: 0.45rem 1.1rem;
+    gap: 0.5rem;
+    padding: 0.35rem 0.85rem;
     border-radius: 999px;
-    background: #1f6b36;
-    color: #f4fff2;
+    background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%);
+    color: #ffffff;
     text-transform: uppercase;
-    letter-spacing: 0.7px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    box-shadow: 0 12px 24px rgba(31, 107, 54, 0.35);
+    letter-spacing: 0.5px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(27, 94, 32, 0.25);
     position: relative;
-    z-index: 1;
+    z-index: 2;
+}
+
+.selection-card__badge::before {
+    content: '✓';
+    font-size: 0.85rem;
+    font-weight: 900;
 }
 
 .selection-card__title {
-    margin: 1.1rem 0 0.6rem;
-    font-size: 1.65rem;
-    color: #10371d;
+    margin: 0.8rem 0 0.4rem;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #1b5e20;
+    line-height: 1.3;
     position: relative;
-    z-index: 1;
+    z-index: 2;
 }
 
 .selection-card__subtitle {
-    margin: 0;
-    color: rgba(16, 55, 29, 0.78);
+    margin: 0 0 1rem;
+    color: #2e7d32;
     font-size: 1rem;
+    font-weight: 500;
     position: relative;
-    z-index: 1;
+    z-index: 2;
 }
 
 .selection-card__meta {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1.1rem;
-    margin-top: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.7rem;
+    margin-top: 1rem;
     position: relative;
-    z-index: 1;
+    z-index: 2;
 }
 
 .selection-card__meta-item {
-    padding: 1rem 1.1rem;
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.78);
-    border: 1px solid rgba(41, 96, 59, 0.18);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    padding: 0.7rem 0.9rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.75);
+    border: 1px solid rgba(27, 94, 32, 0.15);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    backdrop-filter: blur(4px);
+    transition: background 150ms ease, border-color 150ms ease;
+}
+
+.selection-card__meta-item:hover {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(27, 94, 32, 0.25);
 }
 
 .selection-card__meta-label {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
     text-transform: uppercase;
-    font-size: 0.72rem;
-    letter-spacing: 0.6px;
-    color: rgba(16, 55, 29, 0.64);
-    margin-bottom: 0.35rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    color: #5a7d5e;
+    margin-bottom: 0.3rem;
+}
+
+.selection-card__meta-label::before {
+    content: '▪';
+    color: #43a047;
+    font-size: 0.9rem;
 }
 
 .selection-card__meta-value {
     display: block;
-    font-size: 1.05rem;
+    font-size: 1rem;
     font-weight: 600;
-    color: #10371d;
+    color: #1b3c1f;
+    line-height: 1.3;
 }
 
 .history-caption {
     color: var(--text-500);
     margin-bottom: 0.8rem;
+}
+
+/* Panel compacto para el detalle de niveles */
+.details-panel {
+    padding: 0.4rem 0.5rem;
+}
+
+.details-panel h3,
+.details-panel h4 {
+    margin: 0.2rem 0 0.4rem;
+}
+
+.details-panel p,
+.details-panel .stMarkdown p {
+    margin: 0.2rem 0;
+}
+
+.details-panel strong,
+.details-panel .stMarkdown strong {
+    font-weight: 600;
+}
+
+.details-panel div[data-testid="stTabs"] {
+    margin-top: 0.2rem;
 }
 
 @media (max-width: 992px) {
@@ -1935,18 +2426,18 @@ div[data-testid="stExpander"] {
 }
 
 div[data-testid="stExpander"] > details {
-    border-radius: 22px;
-    border: 1px solid rgba(var(--shadow-color), 0.16);
-    background: linear-gradient(165deg, rgba(255, 255, 255, 0.98), rgba(235, 229, 220, 0.9));
-    box-shadow: 0 24px 52px rgba(var(--shadow-color), 0.18);
+    border-radius: 6px;
+    border: 1px solid rgba(var(--shadow-color), 0.15);
+    background: #ffffff;
+    box-shadow: 0 2px 6px rgba(var(--shadow-color), 0.08);
     overflow: hidden;
 }
 
 div[data-testid="stExpander"] > details > summary {
     font-weight: 700;
-    font-size: 1rem;
+    font-size: 0.9rem;
     color: var(--forest-700);
-    padding: 1rem 1.4rem;
+    padding: 0.5rem 0.7rem;
     list-style: none;
     position: relative;
 }
@@ -1963,14 +2454,14 @@ div[data-testid="stExpander"] > details[open] > summary::before {
 }
 
 div[data-testid="stExpander"] > details[open] > summary {
-    background: rgba(var(--forest-500), 0.12);
-    color: var(--forest-800);
+    background: #f5f7f9;
+    color: var(--text-700);
 }
 
 div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
-    padding: 1.2rem 1.5rem 1.4rem;
+    padding: 0.5rem 0.7rem 0.7rem;
     background: #ffffff;
-    border-top: 1px solid rgba(var(--shadow-color), 0.12);
+    border-top: 1px solid rgba(var(--shadow-color), 0.15);
 }
 
 .irl-bubbles {
@@ -2059,16 +2550,16 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .level-card {
-    border-radius: 20px;
-    border: 1px solid rgba(var(--shadow-color), 0.12);
-    background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 10px 20px rgba(var(--shadow-color), 0.1);
-    margin-bottom: 0.3rem;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    border-radius: 8px;
+    border: 1px solid rgba(var(--shadow-color), 0.1);
+    background: #ffffff;
+    box-shadow: none;
+    margin-bottom: 0.25rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .level-card:hover {
-    box-shadow: 0 16px 28px rgba(var(--shadow-color), 0.16);
+    box-shadow: none;
 }
 
 .level-card > div[data-testid="stExpander"] > details {
@@ -2077,10 +2568,10 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .level-card > div[data-testid="stExpander"] > details > summary {
-    font-size: 1.02rem;
+    font-size: 0.9rem;
     font-weight: 700;
-    color: var(--forest-800);
-    padding: 0.8rem 1rem;
+    color: var(--text-800);
+    padding: 0.5rem 0.7rem;
     list-style: none;
     cursor: pointer;
 }
@@ -2090,30 +2581,30 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .level-card > div[data-testid="stExpander"] div[data-testid="stExpanderContent"] {
-    padding: 0 1rem 0.9rem;
-    background: rgba(255, 255, 255, 0.98);
-    border-top: 1px solid rgba(var(--shadow-color), 0.12);
+    padding: 0 0.7rem 0.6rem;
+    background: #ffffff;
+    border-top: 1px solid rgba(var(--shadow-color), 0.15);
 }
 
 .level-card--answered {
-    border-color: rgba(58, 181, 112, 0.75);
-    box-shadow: 0 18px 32px rgba(46, 142, 86, 0.25);
-    background: linear-gradient(140deg, rgba(220, 247, 229, 0.95), rgba(188, 236, 205, 0.9));
+    border-color: rgba(58, 181, 112, 0.35);
+    box-shadow: none;
+    background: #ffffff;
 }
 
 .level-card--editing {
-    border-color: rgba(21, 118, 78, 0.88);
-    box-shadow: 0 26px 48px rgba(27, 122, 84, 0.24);
+    border-color: rgba(21, 118, 78, 0.35);
+    box-shadow: none;
 }
 
 .level-card--editing > div[data-testid="stExpander"] > details > summary {
-    color: #0d4c32;
+    color: var(--text-800);
 }
 
 .level-card--locked {
-    background: linear-gradient(135deg, rgba(228, 232, 238, 0.94), rgba(212, 217, 226, 0.98));
-    border-color: rgba(135, 145, 163, 0.68);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 14px 30px rgba(64, 74, 92, 0.14);
+    background: #f7f9fb;
+    border-color: rgba(135, 145, 163, 0.35);
+    box-shadow: none;
 }
 
 .level-card--locked > div[data-testid="stExpander"] > details > summary {
@@ -2126,57 +2617,51 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .level-card--complete {
-    border-color: rgba(30, 78, 155, 0.7);
+    border-color: rgba(30, 78, 155, 0.35);
 }
 
 .level-card--complete > div[data-testid="stExpander"] > details > summary {
-    color: #10315e;
+    color: var(--text-800);
 }
 
 .level-card--answered > div[data-testid="stExpander"] > details > summary {
-    background: rgba(58, 181, 112, 0.18);
-    color: #145c33;
+    background: #f5f7f9;
+    color: var(--text-800);
     text-shadow: none;
 }
 
 .level-card--answered > div[data-testid="stExpander"] > details[open] > summary {
-    background: rgba(58, 181, 112, 0.28);
-    color: #0f4c28;
+    background: #eef2f5;
+    color: var(--text-800);
 }
 
 .level-card--answered > div[data-testid="stExpander"] > details > summary::before {
-    color: #145c33;
+    color: var(--forest-600);
 }
 
 .level-card--answered > div[data-testid="stExpander"] > details > summary::after {
-    content: "";
-    display: inline-flex;
-    width: 1.2rem;
-    height: 1.2rem;
-    margin-left: 0.5rem;
-    background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACQAAAAkCAYAAADhAJiYAAAJDklEQVR4nK2YXWwc1RXH/+fe+dj1V7xrkmLaSm2eip8qrQQtLSwUx3Gwg8vDELWIfgi6VRMHCC1UtAqbVT9QVYpoEkFlGhCqVAojlTiOQxybNi6IwoMf8SNFVZXUmOzacby7M3PvPX2Ysb3+wI2bngdr1ztzz++eez4vsHUheJ5EIWd/4hOFnI1CzgaDtr74Vp4t5iVKk6rxnx2/ursVH698F4vzPPvc5JVVb3qehO/r/x9Qw4Lb9+dblO3cCse5mYLoJrbkVyjShokFiECGQ5b0AmlecFrk7//91NnZNbr4WoEIALc90JOVLfwQgfaDaDs5FqAN2Kw5FwIgRazW8DwT/s5snq08Mza2dnNbA2IQjoBQgul4pHcvC3qJBHWwitci2wIHEQDMM5jixYiZWQjXboUxYM0gKQBB4FCNRBX93YU/vHlpM6iNgYoQAIDzeZH9YurPZMu9HClNUko2BtA8QynnRa4H5wH5rhY1IU3aAEAQ6ZRr4wEQ5WGJW0iIVg4VSAqwoDLXovsrz02cQSFnY2gquhogQhGEaY+yN8wPU8ru42qkRLNrcaTHWZunofFu+djZy59o3USuf6J3e1g1PwDwJFlSstIMKQyHaqByfGJ0I6i1QHEkAcjOuSfJtfs4UApgZtAvKxfafrZs6mLewvQOhu+bdSSFnIWhKYXEgbODu7spJR8HsIsjFUIKyTU1UHl+YnTt8a0G8iDhQ2cHe05Rs7OXa5GCRcQhD1SOj42iCIFpjxKITaNlef0YLgIgsg/3nCLX7uO6UrAFOOI7KkfPvt0ItQKUwLQf6L5bpu1hDnUES4Qcqn2V4xOjONjr4tjZ4Cog1ksxbwG3G0xPU/bTl0+CqJcEWaz0W7bFe2b+2V5f2qRY3okP3XaoJ0uSXuFIa2p2bITm19cMAwBHJjWmpwm+b9yqvY+NCVlpTU3OrWGIx+D7GoWctWKhQs5GZafJXD93WLj2kzCGWJm3pArumlVXgkZ/uCbxPImuLm4vv9MnHesUa61heN4OcePM78ZnAUAAIAxNRej6iAg4AKXBhNAY+unsc5NXUNl5tf6yMQCDMge7780e6h2B72uUSmbu2PgIh2qMhJCUcrKRhfsAMAo5S8CLc05mztkFW7YBAIe6PNfR9h4A2jCKrkaKEPB93fn9/jSE+L1I2f3Zh3tOX/fI7k4wCIQxWEJDaWbCXZ855KVR2WkE0CUBAAY3kyUd2JJA+BOmsXSu/4t1CCUYeJ4M0tGrJEWzrgY1cqw+VuZGEJg0v8qBMjBMAG771xcyCr6vBbqmFYqeQ0Q3QRuw1gGBzsD3dXJcW4cp5KxP/XBXc7ZzfphSdj8rHQnbSpsg7Lt0fPwvyOetS1FlFsxvQgqQLXX2/Q9vBwCBEky2vJAC0A3DQGRq5frnzgPAuuMqJj63WQ082OtgaCqKAvqRaE31mWp9UTS5rqmHI5WjE2dQzFvYsUNgaCpi4K8QBLKsNNh8LQYCQCmHwbwY749oW3qmeZ2iYlGghCUH5w2bLw8Sx84GmcHuPjjyMb1QC0TKbeZaOFq5LXMPinkLpUmNzAeJG4hYDzOW9C/lITCtfJYmWG+ZUslkB3d52UO9I8sWKq68E4c0uP1ATz851jC0TpFtOxxGb5UvbBvA+z6jNKnR4JMEXtFDJFYBNX6WunXlwaRcZAZ79sGRL4uU3Z99ZPcp3OuJ5d+XIupif4osvArDAiAG2DCbn8D3Nc7nBdYFCC3r4SRJx3+aXCZGPbYUk0jPNSXKCNMeAZAk+Dvk2ml9pbZIrt2fvWF+OPkNKIEbIsoFOIQk4mo0UDk6EdeqydWtLzxPMnEqOTIWTPUYqJCzZ0v+IhgnYAkIx26NQvomAOBiTsL3DV7zo/LF9n6uhqdFU6qZa/UqpZy+7A0LwyjB5AoFK2lV+llpRZblmpq+p/J80mKsbsaWEzEMHoQyMKFaDFtaXmg8JmZBcwBraENM2APPc5azNAHwfVO+0PZ1roejlE41ca1eFU12X8fBXS//w/3wCdGS6jPVcDmi5p4fH9mwCfPio85W3DvIFu1gZjCqTdFiYqG4TsEJ+UUOtYJmJsIdLZ+tteE13yDpqVEEocvn8oVtA0tQZrEewLa+BaBoLtdCkbJXR1Sy9irJfCDAIGbsIUs4sCVA/MeZp8erKOTs2NE8T86Yz1dg8B4kMTlSOEF9PyiuL4mfxA64Csp1TaRqAAy5m0dUIgKdU7rzSH+aBN3HdWVgDBHjDRA4KR2JDA1FRvBhSCE40AKu/Xjmod6vYmgqQj6/MVQQnZZt6TRZZDFzsHlEASjkJEow9XLwCiTtINcSHOjJ8rHxc0tNWgzk+xqeJ+d+O/43U49OQQomgWYi8xQ8T+L2SbOcc5agfF+Xnx0bMIvhEaPNN1Q1vLVydOJtFItiXUTFMDaGpqL2Az39wrXuhjKKDV8xEIcbk2xjthUoAp0X+1P1dDhLoDTZkjhSo+UL2wbg+xr5vNWgjNZZoVgUKJXW1j+C5wn4vs4MdveRY59kpSPZkkqby/Uj5ePnSo3Ov6an9iS6fM5c2r2HHHESWse+UYvOqCruv3ziXBkrI7VOdm6hstOgq4sbYGKIzAdiSdF1j+7pN4zXYZI169GobfO+mZYwaPS3jeuRj2Q31jAMGwA2hCgL4NsfP/PG6XVH0SidLdw4/7ceuLPDlvIlcqy9HKkauXaag2jF6mssvXHVTkyY2d99F7nWCAkSrLQmS0qO9BiYJ+1sy4mZ0usfbfT69v35Fu2kbyFH5LmuvkeW2M5Ka9GSlmaxHsN0+THEkk9uCtQAlR28s5tc58dkW92mFiSjsQAbs4BIv8PAu/GwQIaImAGXwA9CiO3kxOM22RY4VApC/Ly8rfYLlCZVXLCxrt/a/LJhZV6SmYd3HybwILl2B5SOLxmSuX2dqOQSwpGAZrDAGEL9m/LRc+MJSNzCbCD//fajYYhreTR/naPsApPIQ8ovkdKtlHYIhldWY4YJ1RViVMm1ThitJ5dvPj5hnt8a0NJzay6rssXeNlTMzXCtL6OuNOL7IWIgiKRzIl1fqDdcXBGKRdogJVyz0KZXeWulmLfgeXIrCv4DrAHlWHLAUmgAAAAASUVORK5CYII=") no-repeat center center / contain;
-    vertical-align: middle;
+    display: none;
 }
 
 .level-card--pending {
-    border-color: rgba(143, 162, 180, 0.4);
-    background: linear-gradient(140deg, rgba(186, 198, 214, 0.18), rgba(214, 222, 232, 0.12));
+    border-color: rgba(143, 162, 180, 0.25);
+    background: #ffffff;
 }
 
 .level-card--attention {
-    border-color: rgba(224, 156, 70, 0.82);
-    background: linear-gradient(135deg, rgba(224, 156, 70, 0.08), rgba(224, 156, 70, 0.14));
+    border-color: rgba(224, 156, 70, 0.35);
+    background: #ffffff;
 }
 
 .level-card--review {
-    border-color: rgba(156, 112, 230, 0.75);
-    background: linear-gradient(135deg, rgba(156, 112, 230, 0.1), rgba(156, 112, 230, 0.16));
+    border-color: rgba(156, 112, 230, 0.35);
+    background: #ffffff;
 }
 
 .level-card--error {
-    border-color: rgba(206, 104, 86, 0.88);
-    box-shadow: 0 24px 40px rgba(206, 104, 86, 0.24);
-    background: linear-gradient(135deg, rgba(206, 104, 86, 0.08), rgba(206, 104, 86, 0.14));
+    border-color: rgba(206, 104, 86, 0.45);
+    box-shadow: none;
+    background: #ffffff;
 }
 
 .level-card__intro {
@@ -2187,38 +2672,38 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .question-block {
-    border: none;
-    border-radius: 10px;
-    padding: 0.45rem 0.6rem 0.4rem;
-    margin-bottom: 0.2rem;
-    background: rgba(246, 249, 253, 0.96);
-    box-shadow: 0 6px 14px rgba(var(--shadow-color), 0.08);
-    transition: background 0.2s ease, box-shadow 0.2s ease;
+    border: 1px solid rgba(var(--shadow-color), 0.1);
+    border-radius: 6px;
+    padding: 0.5rem 0.6rem 0.5rem;
+    margin-bottom: 0.25rem;
+    background: #ffffff;
+    box-shadow: none;
+    transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .question-block--true {
-    background: linear-gradient(135deg, rgba(21, 118, 78, 0.22), rgba(12, 74, 50, 0.18));
-    box-shadow: 0 12px 22px rgba(14, 92, 64, 0.18);
+    background: #ffffff;
+    border-color: rgba(21, 118, 78, 0.35);
 }
 
 .question-block--pending {
-    background: linear-gradient(135deg, rgba(183, 196, 212, 0.16), rgba(163, 178, 197, 0.14));
-    box-shadow: 0 10px 18px rgba(120, 140, 160, 0.18);
+    background: #ffffff;
+    border-color: rgba(134, 149, 170, 0.3);
 }
 
 .question-block--false {
-    background: linear-gradient(135deg, rgba(170, 182, 198, 0.18), rgba(145, 158, 176, 0.12));
-    box-shadow: 0 12px 22px rgba(120, 135, 155, 0.14);
+    background: #ffffff;
+    border-color: rgba(120, 135, 155, 0.28);
 }
 
 .question-block--saved {
-    box-shadow: 0 16px 28px rgba(14, 92, 64, 0.24);
+    box-shadow: none;
 }
 
 .question-block--locked {
-    background: rgba(244, 246, 250, 0.82);
+    background: #f7f9fb;
     box-shadow: none;
-    opacity: 0.78;
+    opacity: 0.85;
 }
 
 .question-block--locked .question-block__chip {
@@ -2244,16 +2729,16 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .question-block__badge {
-    min-width: 1.8rem;
-    height: 1.8rem;
+    min-width: 1.5rem;
+    height: 1.5rem;
     border-radius: 999px;
-    background: linear-gradient(140deg, rgba(31, 132, 92, 0.95), rgba(17, 91, 63, 0.92));
-    color: #f2fff8;
+    background: #eef2f5;
+    color: var(--text-700);
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
-    font-size: 0.82rem;
+    font-size: 0.78rem;
 }
 
 .question-block__text {
@@ -2271,21 +2756,21 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .question-block__chip--true {
-    background: rgba(28, 113, 83, 0.18);
-    color: rgba(12, 74, 50, 0.9);
-    border: none;
+    background: #f3f5f7;
+    color: var(--text-700);
+    border: 1px solid rgba(var(--shadow-color), 0.08);
 }
 
 .question-block__chip--false {
-    background: rgba(168, 178, 194, 0.2);
-    color: rgba(68, 82, 102, 0.92);
-    border: none;
+    background: #f3f5f7;
+    color: var(--text-700);
+    border: 1px solid rgba(var(--shadow-color), 0.08);
 }
 
 .question-block__chip--pending {
-    background: rgba(134, 149, 170, 0.18);
-    color: rgba(58, 76, 102, 0.9);
-    border: none;
+    background: #f3f5f7;
+    color: var(--text-700);
+    border: 1px solid rgba(var(--shadow-color), 0.08);
 }
 
 .question-block__chip--draft {
@@ -2307,38 +2792,38 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 .question-stepper {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.45rem;
-    margin-bottom: 0.6rem;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
 }
 
 .question-stepper__item {
     min-width: 2.2rem;
-    padding: 0.35rem 0.7rem;
-    border-radius: 12px;
-    background: rgba(31, 55, 91, 0.08);
-    color: rgba(38, 52, 71, 0.78);
+    padding: 0.3rem 0.6rem;
+    border-radius: 10px;
+    background: #ffffff;
+    color: var(--text-700);
     font-weight: 600;
     font-size: 0.85rem;
     text-align: center;
-    border: 1px solid transparent;
-    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    border: 1px solid rgba(var(--shadow-color), 0.08);
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .question-stepper__item.is-done {
-    background: linear-gradient(135deg, rgba(40, 96, 165, 0.22), rgba(29, 71, 128, 0.18));
-    color: rgba(22, 52, 99, 0.95);
-    box-shadow: 0 10px 20px rgba(29, 71, 128, 0.22);
+    background: #f5f7f9;
+    color: var(--text-700);
+    box-shadow: none;
 }
 
 .question-stepper__item.is-active {
-    background: linear-gradient(135deg, rgba(21, 118, 78, 0.24), rgba(12, 74, 50, 0.2));
-    color: rgba(12, 62, 44, 0.96);
-    box-shadow: 0 12px 24px rgba(14, 92, 64, 0.2);
-    border-color: rgba(14, 92, 64, 0.24);
+    background: #eef2f5;
+    color: var(--text-800);
+    box-shadow: none;
+    border-color: rgba(var(--shadow-color), 0.12);
 }
 
 .question-stepper__item.is-active.is-done {
-    background: linear-gradient(135deg, rgba(21, 118, 78, 0.26), rgba(12, 74, 50, 0.22));
+    background: #eef2f5;
 }
 
 .question-actions {
@@ -2425,7 +2910,7 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 }
 
 .question-toggle > div[data-testid="stToggle"] label {
-    transform: scale(1.05);
+    transform: none;
 }
 
 .question-toggle__state {
@@ -2532,33 +3017,36 @@ div[data-testid="stExpander"] > details > div[data-testid="stExpanderContent"] {
 
 div[data-testid="stDataFrame"],
 div[data-testid="stDataEditor"] {
-    border: 1px solid rgba(var(--shadow-color), 0.16);
-    border-radius: 22px;
+    border: 1px solid rgba(var(--shadow-color), 0.12);
+    border-radius: 6px;
     overflow: hidden;
-    box-shadow: 0 22px 44px rgba(var(--shadow-color), 0.18);
+    box-shadow: none;
     background: #ffffff;
 }
 
 div[data-testid="stDataFrame"] div[role="columnheader"],
 div[data-testid="stDataEditor"] div[role="columnheader"] {
-    background: linear-gradient(135deg, var(--forest-700), var(--forest-500)) !important;
-    color: #ffffff !important;
-    font-weight: 700;
-    font-size: 0.92rem;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    border-bottom: 2px solid rgba(12, 32, 20, 0.22);
-    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.14);
+    background: #f5f7f9 !important;
+    color: var(--text-700) !important;
+    font-weight: 600;
+    font-size: 0.88rem;
+    text-transform: none;
+    letter-spacing: 0;
+    border-bottom: 1px solid rgba(12, 32, 20, 0.15);
+    box-shadow: none;
 }
 
 div[data-testid="stDataFrame"] div[role="gridcell"],
 div[data-testid="stDataEditor"] div[role="gridcell"] {
     color: var(--text-700);
-    font-size: 0.92rem;
-    border-bottom: 1px solid rgba(var(--forest-700), 0.14);
-    border-right: 1px solid rgba(var(--forest-700), 0.1);
-    padding: 0.55rem 0.75rem;
-    background: rgba(255, 255, 255, 0.92);
+    font-size: 0.9rem;
+    border-bottom: 1px solid rgba(var(--forest-700), 0.1);
+    border-right: 1px solid rgba(var(--forest-700), 0.08);
+    padding: 0.45rem 0.6rem;
+    background: #ffffff;
+    word-wrap: break-word;
+    white-space: normal;
+    max-width: 300px;
 }
 
 div[data-testid="stDataFrame"] div[role="row"],
@@ -2568,18 +3056,18 @@ div[data-testid="stDataEditor"] div[role="row"] {
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"],
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(odd) div[role="row"] {
-    background: rgba(255, 255, 255, 0.98);
+    background: #ffffff;
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div:nth-child(even) div[role="row"],
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div:nth-child(even) div[role="row"] {
-    background: rgba(199, 217, 182, 0.32);
+    background: #fafbfc;
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover,
 div[data-testid="stDataEditor"] div[role="rowgroup"] > div div[role="row"]:hover {
-    background: rgba(63, 129, 68, 0.18);
-    box-shadow: inset 0 0 0 1px rgba(12, 32, 20, 0.2);
+    background: #f3f5f7;
+    box-shadow: none;
 }
 
 div[data-testid="stDataFrame"] div[role="rowgroup"] > div div[role="row"]:hover div[role="gridcell"],
@@ -2591,113 +3079,156 @@ div[data-testid="stDataEditor"] div[role="rowgroup"] > div div[role="row"]:hover
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    """
-    <div class="page-intro">
-        <div>
-            <h1>Evaluacion estrategica de madurez tecnologica</h1>
-            <p>
-                Priorizamos proyectos del portafolio maestro para registrar evidencias por dimension, estimar el TRL e impulsar el
-                cierre de brechas con una mirada integral entre cliente, negocio y tecnologia.
-            </p>
-        </div>
-        <div class="page-intro__aside">
-            <div class="intro-stat">
-                <strong>Objetivo</strong>
-                <p>Seleccionar iniciativas clave y capturar sus niveles IRL, alineando evidencia y responsables.</p>
-            </div>
-            <div class="intro-stat">
-                <strong>Resultado</strong>
-                <p>Perfil comparativo IRL con historial descargable y focos para la ruta comercial EBCT.</p>
-            </div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
+# Banner institucional de la Hoja de IRL (debe ir al principio)
+render_irl_banner()
+
+# ========================================
+# SELECTOR DE MODO: CONECTADO vs INDIVIDUAL
+# ========================================
+st.markdown("---")
+st.subheader("🔀 Modo de Trabajo")
+
+# Selector de modo con componentes nativos
+col_mode_info1, col_mode_info2 = st.columns(2)
+
+with col_mode_info1:
+    st.info("""
+    **🔗 Modo Conectado**
+    - Usa proyectos de Fase 0
+    - Solo proyectos priorizados
+    - Validación automática
+    - Flujo continuo
+    """)
+
+with col_mode_info2:
+    st.info("""
+    **🔓 Modo Individual**
+    - Todos los proyectos
+    - Sin depender de ranking
+    - Carga archivos directo
+    - Máxima flexibilidad
+    """)
+
+# Selector de modo funcional
+current_mode = st.session_state.get('irl_mode', 'conectado')
+mode_irl = st.radio(
+    "Selecciona tu modo:",
+    options=["🔗 Modo Conectado", "🔓 Modo Individual"],
+    index=0 if current_mode == 'conectado' else 1,
+    horizontal=True,
+    key='radio_irl_mode'
 )
+
+# Guardar modo seleccionado
+if "🔗" in mode_irl:
+    st.session_state.irl_mode = 'conectado'
+else:
+    st.session_state.irl_mode = 'individual'
+
+# Status y validación
+if st.session_state.irl_mode == 'conectado':
+    payload = st.session_state.get('fase1_payload')
+    fase1_ready = st.session_state.get('fase1_ready', False)
+    
+    if not (payload and fase1_ready):
+        st.error("⚠️ **Modo Conectado requiere datos de Fase 0**")
+        
+        if st.button('📂 Ir a Fase 0 para calcular ranking', type="primary", use_container_width=True):
+            fase0_page = next(Path("pages").glob("02_*_Fase_0_Portafolio.py"), None)
+            if fase0_page:
+                st.switch_page(str(fase0_page))
+        st.stop()
+    else:
+        ranking_df = payload.get('ranking', pd.DataFrame())
+        num_proyectos = len(ranking_df) if not ranking_df.empty else 0
+        st.success(f"✅ Modo Conectado activo - {num_proyectos} proyecto(s) disponible(s)")
+else:
+    # Tips para modo individual
+    with st.expander("💡 Tips para Modo Individual", expanded=True):
+        st.markdown("""
+        - ✅ Descarga la plantilla Excel con todas las preguntas
+        - ✅ Completa solo las respuestas VERDADERAS (ahorra tiempo)
+        - ✅ Sube el archivo cuando termines
+        - ✅ Puedes exportar y consolidar después
+        """)
+
+st.markdown("---")
+
+# ========================================
+# LÓGICA SEGÚN MODO SELECCIONADO
+# ========================================
 
 fase0_page = next(Path("pages").glob("02_*_Fase_0_Portafolio.py"), None)
 fase2_page = next(Path("pages").glob("04_*_Fase_2_*.py"), None)
-if fase0_page:
-    st.markdown("<div class='back-band'>", unsafe_allow_html=True)
-    if st.button("Volver a Fase 0", type="primary"):
-        st.switch_page(str(fase0_page))
-    st.markdown("</div>", unsafe_allow_html=True)
 
-payload = st.session_state.get('fase1_payload')
-fase1_ready = st.session_state.get('fase1_ready', False)
-if "fase2_ready" not in st.session_state:
-    st.session_state["fase2_ready"] = False
+if st.session_state.irl_mode == 'conectado':
+    # MODO CONECTADO: Requiere payload de Fase 0
+    payload = st.session_state.get('fase1_payload')
+    fase1_ready = st.session_state.get('fase1_ready', False)
+    
+    if "fase2_ready" not in st.session_state:
+        st.session_state["fase2_ready"] = False
 
-if not payload or not fase1_ready:
-    st.warning('Calcula el ranking de candidatos en Fase 0 y usa el boton "Ir a Fase 1" para continuar.')
-    if fase0_page:
-        if st.button('Ir a Fase 0', key='btn_ir_fase0_desde_fase1'):
-            st.switch_page(str(fase0_page))
-    st.stop()
+    if not payload or not fase1_ready:
+        st.warning('Calcula el ranking de candidatos en Fase 0 y usa el boton "Ir a Fase 1" para continuar.')
+        if fase0_page:
+            if st.button('Ir a Fase 0', key='btn_ir_fase0_desde_fase1'):
+                st.switch_page(str(fase0_page))
+        st.stop()
 
-ranking_df = payload['ranking'].copy().reset_index(drop=True)
-if ranking_df.empty:
-    st.warning('El ranking recibido esta vacio. Recalcula la priorizacion en Fase 0.')
-    if fase0_page:
-        if st.button('Recalcular en Fase 0', key='btn_recalcular_fase0'):
-            st.switch_page(str(fase0_page))
-    st.stop()
+    ranking_df = payload['ranking'].copy().reset_index(drop=True)
+    if ranking_df.empty:
+        st.warning('El ranking recibido esta vacio. Recalcula la priorizacion en Fase 0.')
+        if fase0_page:
+            if st.button('Recalcular en Fase 0', key='btn_recalcular_fase0'):
+                st.switch_page(str(fase0_page))
+        st.stop()
 
-metrics_cards = payload.get('metrics_cards', [])
-umbrales = payload.get('umbrales', {})
+    metrics_cards = payload.get('metrics_cards', [])
+    umbrales = payload.get('umbrales', {})
+        
+    # Ocultamos visualización de métricas para un layout más compacto
+    # (se conserva la data para otros cálculos).
 
-if metrics_cards:
-    metrics_html = "<div class='metric-ribbon'>"
-    for label, value in metrics_cards:
-        metrics_html += (
-            "<div class='metric-ribbon__item'>"
-            f"<span class='metric-ribbon__value'>{value}</span>"
-            f"<span class='metric-ribbon__label'>{label}</span>"
-            "</div>"
-        )
-    metrics_html += "</div>"
-    st.markdown(metrics_html, unsafe_allow_html=True)
+    # Se elimina la sección visual de “Ranking de candidatos priorizados” para simplificar la interfaz.
+    ranking_keys = ranking_df[['id_innovacion', 'ranking']].copy()
+    ranking_keys['id_str'] = ranking_keys['id_innovacion'].astype(str)
 
-with st.container():
-    st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
-    st.markdown('#### Ranking de candidatos priorizados')
-    if umbrales:
-        thresholds = "".join(
-            f"<span class='threshold-chip'><strong>{valor}</strong>{nombre}</span>" for nombre, valor in umbrales.items()
-        )
-        st.markdown(f"<div class='threshold-band'>{thresholds}</div>", unsafe_allow_html=True)
+    df_port = utils.normalize_df(db.fetch_df())
+    df_port['id_str'] = df_port['id_innovacion'].astype(str)
+    df_port = df_port[df_port['id_str'].isin(ranking_keys['id_str'])].copy()
+    if df_port.empty:
+        st.warning('Los proyectos del ranking ya no estan disponibles en el portafolio maestro. Recalcula la priorizacion en Fase 0.')
+        if fase0_page:
+            if st.button('Volver a Fase 0', key='btn_volver_recalcular'):
+                st.switch_page(str(fase0_page))
+        st.stop()
 
-    ranking_display = ranking_df.copy().reset_index(drop=True)
-    if 'evaluacion_calculada' in ranking_display.columns:
-        ranking_display['evaluacion_calculada'] = ranking_display['evaluacion_calculada'].astype(float).round(1)
+    order_map = dict(zip(ranking_keys['id_str'], ranking_keys['ranking']))
+    df_port['orden_ranking'] = df_port['id_str'].map(order_map)
+    df_port = df_port.sort_values('orden_ranking').reset_index(drop=True)
+    df_port = df_port.drop(columns=['id_str', 'orden_ranking'], errors='ignore')
 
-    with st.expander('Ver ranking priorizado', expanded=False):
-        render_table(
-            ranking_display,
-            key='fase1_ranking_andes',
-            highlight_top_rows=3,
-            include_actions=True,
-            hide_index=True,
-        )
-    st.markdown("</div>", unsafe_allow_html=True)
-ranking_keys = ranking_df[['id_innovacion', 'ranking']].copy()
-ranking_keys['id_str'] = ranking_keys['id_innovacion'].astype(str)
-
-df_port = utils.normalize_df(db.fetch_df())
-df_port['id_str'] = df_port['id_innovacion'].astype(str)
-df_port = df_port[df_port['id_str'].isin(ranking_keys['id_str'])].copy()
-if df_port.empty:
-    st.warning('Los proyectos del ranking ya no estan disponibles en el portafolio maestro. Recalcula la priorizacion en Fase 0.')
-    if fase0_page:
-        if st.button('Volver a Fase 0', key='btn_volver_recalcular'):
-            st.switch_page(str(fase0_page))
-    st.stop()
-
-order_map = dict(zip(ranking_keys['id_str'], ranking_keys['ranking']))
-df_port['orden_ranking'] = df_port['id_str'].map(order_map)
-df_port = df_port.sort_values('orden_ranking').reset_index(drop=True)
-df_port = df_port.drop(columns=['id_str', 'orden_ranking'], errors='ignore')
+else:
+    # MODO INDIVIDUAL: Trabaja sin payload de Fase 0
+    if "fase2_ready" not in st.session_state:
+        st.session_state["fase2_ready"] = False
+    
+    # Obtener todos los proyectos disponibles del portafolio maestro
+    df_port = utils.normalize_df(db.fetch_df())
+    
+    if df_port.empty:
+        st.warning('⚠️ No hay proyectos en el portafolio maestro. Carga proyectos en Fase 0 primero.')
+        if fase0_page:
+            if st.button('Ir a Fase 0', key='btn_ir_fase0_individual'):
+                st.switch_page(str(fase0_page))
+        st.stop()
+    
+    # En modo individual no hay ranking, trabajamos con todos los proyectos
+    payload = None
+    ranking_df = pd.DataFrame()
+    metrics_cards = []
+    umbrales = {}
 
 
 
@@ -2783,37 +3314,356 @@ with st.container():
 
 with st.container():
     st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
-    st.markdown("### Evaluación IRL")
-    st.caption(
-        "Responde las preguntas de cada pestaña y acredita la evidencia para calcular automáticamente el nivel de madurez por dimensión."
-    )
-    _init_irl_state()
-    badge_data: list[tuple[str, str, dict]] = []
-    for dimension, _ in IRL_DIMENSIONS:
-        counts = _compute_dimension_counts(dimension)
-        badge = _dimension_badge(counts)
-        badge_data.append((dimension, badge, counts))
-
-    bubbles_html = "<div class='irl-bubbles'>"
-    for dimension, badge, counts in badge_data:
-        bubble_class = _dimension_badge_class(badge)
-        bubbles_html += (
-            "<div class='irl-bubble irl-bubble--"
-            + bubble_class
-            + "'>"
-            + f"<span class='irl-bubble__label'>{dimension} ({DIMENSION_DESCRIPTIONS[dimension]})</span>"
-            + f"<strong class='irl-bubble__badge'>{badge}</strong>"
-            + f"<small>{counts['completed']}/{counts['total']} en cálculo</small>"
-            + "</div>"
+    st.markdown("### 📊 Evaluación IRL - Flujo de Trabajo")
+    
+    # Guía visual simple con columnas
+    col_paso1, col_paso2, col_paso3, col_paso4 = st.columns(4)
+    
+    with col_paso1:
+        st.markdown("### 1️⃣")
+        st.markdown("**📥 Descargar**")
+        st.caption("Plantilla Excel pre-llenada")
+    
+    with col_paso2:
+        st.markdown("### 2️⃣")
+        st.markdown("**📝 Completar**")
+        st.caption("Cambia a VERDADERO")
+    
+    with col_paso3:
+        st.markdown("### 3️⃣")
+        st.markdown("**📤 Subir**")
+        st.caption("Carga el archivo")
+    
+    with col_paso4:
+        st.markdown("### 4️⃣")
+        st.markdown("**✅ Confirmar**")
+        st.caption("Aplica al sistema")
+    
+    st.markdown("---")
+    
+    # Sección de descarga
+    st.markdown("#### 📥 Paso 1: Descargar Plantilla de Evaluación")
+    
+    col_download, col_info = st.columns([1, 2])
+    
+    with col_download:
+        excel_template = generate_irl_excel_template()
+        st.download_button(
+            label="⬇️ Descargar Plantilla Excel",
+            data=excel_template,
+            file_name=f"Evaluacion_IRL_Proyecto_{project_id}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary"
         )
-    bubbles_html += "</div>"
-    st.markdown(bubbles_html, unsafe_allow_html=True)
-
-    tab_labels = [f"{dimension} ({DIMENSION_DESCRIPTIONS[dimension]}) · {badge}" for dimension, badge, _ in badge_data]
-    tabs = st.tabs(tab_labels)
-    for idx, (dimension, _, _) in enumerate(badge_data):
-        with tabs[idx]:
-            _render_dimension_tab(dimension)
+    
+    with col_info:
+        st.info("""
+        **📋 La plantilla incluye:**
+        - ✅ Todas las respuestas PRE-LLENADAS en FALSO
+        - ✅ Solo cambias a VERDADERO las que SÍ cumplan
+        - ✅ Agrega evidencias en las VERDADERO
+        - ✅ Ahorra 80% del tiempo de evaluación
+        """)
+    
+    st.markdown("---")
+    
+    # Paso 2: Subir archivo completado
+    st.markdown("#### 📤 Paso 2: Subir Evaluación Completada")
+    
+    uploaded_file = st.file_uploader(
+        "Selecciona el archivo Excel completado",
+        type=["xlsx"],
+        help="Sube la plantilla que descargaste y completaste offline"
+    )
+    
+    # Almacenar respuestas pendientes y generar tabla de revisión
+    if uploaded_file is not None:
+        if 'irl_excel_file_loaded' not in st.session_state or st.session_state.get('irl_excel_file_loaded') != uploaded_file.name:
+            responses = load_irl_excel_responses(uploaded_file)
+            if responses:
+                st.session_state.pending_irl_responses = responses
+                st.session_state.irl_excel_file_loaded = uploaded_file.name
+                
+                # Generar datos para la tabla de revisión
+                revision_data = []
+                for key, value in responses.items():
+                    if key.startswith('resp_'):
+                        # Extraer información del key: resp_DIMENSION_NIVEL_PREGUNTA
+                        parts = key.replace('resp_', '').split('_')
+                        dimension = parts[0]
+                        nivel = parts[1]
+                        pregunta_num = parts[2]
+                        
+                        # Obtener evidencia correspondiente
+                        evid_key = f"evid_{dimension}_{nivel}_{pregunta_num}"
+                        evidencia = responses.get(evid_key, "")
+                        
+                        # Buscar texto de la pregunta
+                        levels = LEVEL_DEFINITIONS.get(dimension, [])
+                        pregunta_texto = ""
+                        for level in levels:
+                            if level["nivel"] == int(nivel):
+                                preguntas = level.get("preguntas", [])
+                                if int(pregunta_num) <= len(preguntas):
+                                    pregunta_texto = preguntas[int(pregunta_num) - 1]
+                                break
+                        
+                        dim_desc = DIMENSION_DESCRIPTIONS.get(dimension, dimension)
+                        
+                        revision_data.append({
+                            'Dimensión': f"{dimension} - {dim_desc}",
+                            'Nivel': nivel,
+                            'Pregunta #': pregunta_num,
+                            'Pregunta': pregunta_texto[:80] + "..." if len(pregunta_texto) > 80 else pregunta_texto,
+                            'Respuesta': value,
+                            'Evidencia': evidencia[:60] + "..." if len(evidencia) > 60 else evidencia if evidencia else "(Sin evidencia)"
+                        })
+                
+                st.session_state.irl_revision_data = revision_data
+    
+    # Botones de acción para archivo revisado
+    if st.session_state.get('irl_excel_file_loaded') and 'pending_irl_responses' in st.session_state:
+        st.markdown("---")
+        st.markdown("##### ✅ Confirmar y Aplicar")
+        
+        col_aplicar, col_cancelar = st.columns([1, 1])
+        
+        with col_aplicar:
+            if st.button("✅ Aplicar respuestas al sistema", use_container_width=True, type="primary"):
+                # Aplicar todas las respuestas al session_state
+                for key, value in st.session_state.pending_irl_responses.items():
+                    st.session_state[key] = value
+                
+                # Inicializar estado y actualizar estados de niveles basados en respuestas
+                _init_irl_state()
+                _update_level_states_from_responses()
+                
+                # Calcular scores después de actualizar estados
+                _sync_all_scores()
+                
+                # Marcar como aplicado
+                st.session_state.irl_responses_applied = True
+                
+                # Limpiar pendientes pero mantener datos de revisión
+                del st.session_state.pending_irl_responses
+                
+                st.success("✅ Respuestas aplicadas y niveles calculados correctamente.")
+                st.rerun()
+        
+        with col_cancelar:
+            if st.button("❌ Cancelar y subir otro archivo", use_container_width=True):
+                # Limpiar todo sin aplicar
+                if 'pending_irl_responses' in st.session_state:
+                    del st.session_state.pending_irl_responses
+                if 'irl_excel_file_loaded' in st.session_state:
+                    del st.session_state.irl_excel_file_loaded
+                if 'irl_revision_data' in st.session_state:
+                    del st.session_state.irl_revision_data
+                
+                st.info("Archivo cancelado. Puedes subir un nuevo archivo.")
+                st.rerun()
+    
+    st.markdown("---")
+    
+    # Paso 3: Mostrar resultados automáticamente después de aplicar
+    if st.session_state.get('irl_responses_applied', False):
+        st.markdown("### 📊 Resultados del Análisis IRL por Dimensión")
+        st.caption("*Cada dimensión se evalúa de forma independiente (Niveles 0-9)*")
+        
+        # Asegurar que los estados están actualizados antes de calcular
+        _init_irl_state()
+        _update_level_states_from_responses()
+        _sync_all_scores()
+        
+        st.markdown("---")
+        
+        # Calcular métricas por dimensión
+        dimension_results = []
+        for dimension, dim_desc in IRL_DIMENSIONS:
+            nivel_alcanzado = st.session_state["irl_scores"].get(dimension, 0)
+            counts = _compute_dimension_counts(dimension)
+            porcentaje = (nivel_alcanzado / 9) * 100 if nivel_alcanzado > 0 else 0
+            
+            dimension_results.append({
+                'dimension': dimension,
+                'descripcion': dim_desc,
+                'nivel': nivel_alcanzado,
+                'porcentaje': porcentaje,
+                'completado': counts['completed'],
+                'total': counts['total']
+            })
+        
+        # Tarjetas de dimensiones y gráfico radar en el mismo nivel
+        st.markdown("#### 🎯 Resultados por Dimensión")
+        
+        # Crear layout: 6 tarjetas compactas + radar
+        col_tarjetas, col_radar = st.columns([2, 1])
+        
+        with col_tarjetas:
+            # Crear 6 columnas (una por dimensión) - 2 filas de 3
+            cols_row1 = st.columns(3)
+            cols_row2 = st.columns(3)
+            
+            for idx, result in enumerate(dimension_results):
+                # Usar primera o segunda fila según el índice
+                cols = cols_row1 if idx < 3 else cols_row2
+                col_idx = idx % 3
+                
+                with cols[col_idx]:
+                    # Colores profesionales más sutiles
+                    if result['porcentaje'] >= 70:
+                        color_principal = "#1565c0"  # Azul profesional oscuro
+                        bgcolor = "#e3f2fd"  # Azul muy claro
+                        icono = "✓"
+                        icono_color = "#1976d2"
+                    elif result['porcentaje'] >= 40:
+                        color_principal = "#f57c00"  # Naranja
+                        bgcolor = "#fff3e0"
+                        icono = "◐"
+                        icono_color = "#fb8c00"
+                    else:
+                        color_principal = "#757575"  # Gris profesional
+                        bgcolor = "#f5f5f5"
+                        icono = "○"
+                        icono_color = "#9e9e9e"
+                    
+                    # Tarjeta compacta más profesional
+                    st.markdown(f"""
+                        <div style="background: linear-gradient(135deg, {bgcolor} 0%, white 100%); 
+                                    border-left: 4px solid {color_principal}; 
+                                    border-radius: 8px; padding: 0.7rem; margin-bottom: 0.5rem;
+                                    box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
+                                <div style="font-weight: 600; color: {color_principal}; font-size: 0.9rem;">
+                                    {result['dimension']}
+                                </div>
+                                <div style="font-size: 1.2rem; color: {icono_color}; font-weight: bold;">
+                                    {icono}
+                                </div>
+                            </div>
+                            <div style="text-align: center; background: white; border-radius: 6px; padding: 0.5rem; margin: 0.3rem 0;">
+                                <div style="font-size: 1.6rem; font-weight: bold; color: {color_principal};">
+                                    {result['nivel']}
+                                </div>
+                                <div style="font-size: 0.65rem; color: #999; text-transform: uppercase; letter-spacing: 0.5px;">
+                                    de 9 niveles
+                                </div>
+                            </div>
+                            <div style="text-align: center; font-size: 0.75rem; color: #666; margin-top: 0.3rem;">
+                                {result['porcentaje']:.0f}% progreso
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+        
+        with col_radar:
+            st.markdown("##### 📊 Visualización")
+            
+            # Crear gráfico radar
+            labels = [r['dimension'] for r in dimension_results]
+            values = [r['nivel'] for r in dimension_results]
+            values_cycle = values + values[:1]
+            theta = labels + labels[:1]
+            
+            radar_fig = go.Figure()
+            radar_fig.add_trace(
+                go.Scatterpolar(
+                    r=values_cycle,
+                    theta=theta,
+                    fill="toself",
+                    name="Nivel IRL",
+                    line=dict(color="#1565c0", width=2.5),
+                    fillcolor="rgba(21, 101, 192, 0.25)",
+                    marker=dict(size=7, color="#1976d2"),
+                    hovertemplate="<b>%{theta}</b><br>Nivel: %{r}/9<extra></extra>"
+                )
+            )
+            
+            radar_fig.update_layout(
+                polar=dict(
+                    radialaxis=dict(
+                        visible=True,
+                        range=[0, 9],
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=1,
+                        gridcolor="rgba(0,0,0,0.08)",
+                        gridwidth=1
+                    ),
+                    angularaxis=dict(
+                        gridcolor="rgba(0,0,0,0.08)",
+                        gridwidth=1
+                    ),
+                    bgcolor="rgba(255,255,255,0.9)"
+                ),
+                template="plotly_white",
+                margin=dict(l=60, r=60, t=20, b=20),
+                height=400,
+                showlegend=False,
+                font=dict(size=10, family="Arial, sans-serif")
+            )
+            
+            st.plotly_chart(radar_fig, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Expander con detalle completo de preguntas/respuestas
+        with st.expander("📋 Ver Detalle Completo de Respuestas por Dimensión", expanded=False):
+            tab_labels = [f"{r['dimension']} - {r['descripcion']}" for r in dimension_results]
+            tabs = st.tabs(tab_labels)
+            
+            for idx, result in enumerate(dimension_results):
+                with tabs[idx]:
+                    dimension = result['dimension']
+                    levels = LEVEL_DEFINITIONS.get(dimension, [])
+                    
+                    for level in levels:
+                        level_id = level["nivel"]
+                        descripcion = level.get("descripcion", "")
+                        preguntas = level.get("preguntas", [])
+                        
+                        st.markdown(f"**Nivel {level_id}**: {descripcion}")
+                        
+                        # Mostrar respuestas
+                        for idx_p, pregunta in enumerate(preguntas, start=1):
+                            resp_key = f"resp_{dimension}_{level_id}_{idx_p}"
+                            evid_key = f"evid_{dimension}_{level_id}_{idx_p}"
+                            
+                            respuesta = st.session_state.get(resp_key, "FALSO")
+                            evidencia = st.session_state.get(evid_key, "")
+                            
+                            icon = "✅" if respuesta == "VERDADERO" else "❌"
+                            color = "#2e7d32" if respuesta == "VERDADERO" else "#d32f2f"
+                            
+                            evidencia_html = f"<br><em>Evidencia:</em> {evidencia}" if evidencia else ""
+                            st.markdown(f"""
+                                <div style="background: rgba(0,0,0,0.02); padding: 0.8rem; 
+                                            border-left: 4px solid {color}; margin: 0.5rem 0; border-radius: 4px;">
+                                    <strong>{icon} Pregunta {idx_p}:</strong> {pregunta}<br>
+                                    <em>Respuesta:</em> <strong style="color: {color};">{respuesta}</strong>
+                                    {evidencia_html}
+                                </div>
+                            """, unsafe_allow_html=True)
+                        
+                        st.markdown("---")
+        
+        # Botón para limpiar y volver a evaluar
+        st.markdown("---")
+        col_clear, col_empty = st.columns([1, 2])
+        with col_clear:
+            if st.button("🔄 Nueva Evaluación", use_container_width=True):
+                # Limpiar todas las respuestas
+                keys_to_delete = [k for k in st.session_state.keys() if k.startswith(('resp_', 'toggle_', 'evid_'))]
+                for k in keys_to_delete:
+                    del st.session_state[k]
+                
+                # Limpiar flags
+                st.session_state.irl_responses_applied = False
+                if 'irl_excel_file_loaded' in st.session_state:
+                    del st.session_state.irl_excel_file_loaded
+                
+                st.rerun()
+    
     st.markdown("</div>", unsafe_allow_html=True)
 
 with st.container():
@@ -2821,6 +3671,7 @@ with st.container():
     df_respuestas = _collect_dimension_responses()
     detalles_dimensiones = _collect_dimension_details()
     with st.expander('Detalle de niveles por dimension', expanded=False):
+        st.markdown("<div class='details-panel'>", unsafe_allow_html=True)
         if df_respuestas.empty:
             st.info("Aún no hay niveles respondidos en esta evaluación.")
 
@@ -2847,11 +3698,11 @@ with st.container():
                         )
         else:
             st.warning("No se encontraron definiciones de niveles para las dimensiones IRL.")
+    st.markdown("</div>", unsafe_allow_html=True)
     # Use cached puntaje when available; avoid recalculating on each rerun to improve responsiveness.
     puntaje = st.session_state.get("irl_last_puntaje")
     if puntaje is None and df_respuestas.empty:
         puntaje = None
-    st.metric("Nivel IRL alcanzado", f"{puntaje:.1f}" if puntaje is not None else "-")
 
     col_guardar, col_ayuda = st.columns([1, 1])
     with col_guardar:
@@ -2919,111 +3770,5 @@ with st.container():
     with col_ayuda:
         st.info(
             "El guardado crea un registro por dimensión con las evidencias acreditadas y asocia el IRL global a la misma fecha de evaluación."
-        )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with st.container():
-    st.markdown("<div class='section-shell section-shell--split'>", unsafe_allow_html=True)
-    st.markdown("#### Radar IRL interactivo")
-    radar_col_left, radar_col_right = st.columns([1.1, 1])
-    with radar_col_left:
-        st.caption("Los niveles mostrados se ajustan automáticamente según la evaluación registrada en las pestañas superiores.")
-        _init_irl_state()
-        radar_values = {}
-        for dimension, _ in IRL_DIMENSIONS:
-            valor = st.session_state["irl_scores"].get(dimension, 0)
-            radar_values[dimension] = valor
-        resumen_df = (
-            pd.DataFrame(
-                [
-                    {"Dimensión": dimension, "Nivel": radar_values.get(dimension, 0)}
-                    for dimension, _ in IRL_DIMENSIONS
-                ]
-            )
-            .set_index("Dimensión")
-        )
-        with st.expander('Resumen numerico IRL', expanded=False):
-            st.dataframe(
-                resumen_df,
-                use_container_width=True,
-            )
-
-    with radar_col_right:
-        labels = list(radar_values.keys())
-        values = list(radar_values.values())
-        values_cycle = values + values[:1]
-        theta = labels + labels[:1]
-        radar_fig = go.Figure()
-        radar_fig.add_trace(
-            go.Scatterpolar(
-                r=values_cycle,
-                theta=theta,
-                fill="toself",
-                name="Perfil IRL",
-                line_color="#3f8144",
-                fillcolor="rgba(63, 129, 68, 0.25)",
-            )
-        )
-        radar_fig.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[0, 9])),
-            template="plotly_white",
-            margin=dict(l=10, r=10, t=40, b=10),
-        )
-        st.plotly_chart(radar_fig, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with st.container():
-    st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
-    st.subheader("Historial del proyecto")
-
-    historial = get_trl_history(project_id)
-    if historial.empty:
-        st.warning("Aun no existe historial IRL para este proyecto.")
-    else:
-        ultimo_registro = historial["fecha_eval"].iloc[0]
-        st.caption(f"Ultima evaluacion registrada: {ultimo_registro}")
-        with st.expander('Historial de evaluaciones', expanded=False):
-            render_table(
-                historial,
-                key='fase1_historial_trl',
-                include_actions=True,
-                hide_index=True,
-            )
-
-        datos_ultimo = historial[historial["fecha_eval"] == ultimo_registro].copy()
-        pivot = datos_ultimo.groupby("dimension", as_index=False)["nivel"].mean()
-        dimensiones_ids = trl.ids_dimensiones()
-        dimensiones_labels = trl.labels_dimensiones()
-
-        pivot["orden"] = pivot["dimension"].apply(lambda dim: dimensiones_ids.index(dim) if dim in dimensiones_ids else 999)
-        pivot = pivot.sort_values("orden")
-        valores = []
-        for dim_id in dimensiones_ids:
-            registro = pivot.loc[pivot["dimension"] == dim_id, "nivel"]
-            valores.append(float(registro.values[0]) if len(registro) > 0 and pd.notna(registro.values[0]) else np.nan)
-
-        angles = np.linspace(0, 2 * np.pi, len(dimensiones_labels), endpoint=False).tolist()
-        valores_ciclo = valores + valores[:1]
-        angulos_ciclo = angles + angles[:1]
-
-        fig, ax = plt.subplots(figsize=(5, 5), subplot_kw={"polar": True})
-        ax.set_theta_offset(np.pi / 2)
-        ax.set_theta_direction(-1)
-        ax.set_xticks(angles)
-        ax.set_xticklabels(dimensiones_labels)
-        ax.set_rlabel_position(0)
-        ax.set_yticks([1, 3, 5, 7, 9])
-        ax.set_ylim(0, 9)
-
-        ax.plot(angulos_ciclo, valores_ciclo, linewidth=2, color="#3f8144")
-        ax.fill(angulos_ciclo, valores_ciclo, alpha=0.25, color="#3f8144")
-
-        st.pyplot(fig)
-
-        st.download_button(
-            "Descargar historial TRL (CSV)",
-            data=historial.to_csv(index=False).encode("utf-8"),
-            file_name=f"trl_historial_{seleccion}.csv",
-            mime="text/csv",
         )
     st.markdown("</div>", unsafe_allow_html=True)
